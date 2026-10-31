@@ -16,9 +16,9 @@ Si algo de la Parte B contradice la Parte A, detente, explica el conflicto y pro
 
 ## Estado del proyecto
 
-- **Fase actual:** 0 — Análisis y modelo de amenazas. Sin código.
-- **Fases aprobadas:** ninguna.
-- **Siguiente paso:** entregar la Fase 0 según la sección C3 de `docs/baseline.md` y esperar aprobación.
+- **Fase actual:** 0.5 — Spike de Mandrill (sin código de producción). Plan presentado, pendiente de confirmación.
+- **Fases aprobadas:** 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
+- **Siguiente paso:** confirmar el plan de la fase 0.5 y recibir las API keys de Mandrill; después, Fase 1.
 
 Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases aprobadas, siguiente paso).
 
