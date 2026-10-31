@@ -20,6 +20,8 @@ describe('inventario de rutas (deny by default)', () => {
     }
     const publicRoutes = app.routeInventory.filter((route) => route.public).map((route) => `${route.method} ${route.url}`);
     assert.deepEqual(publicRoutes.sort(), ['GET /health/live', 'GET /health/ready', 'HEAD /health/live', 'HEAD /health/ready']);
+    const permissions = app.routeInventory.filter((route) => !route.public).map((route) => route.permission);
+    assert.ok(permissions.includes('permissions.view'));
     await app.close();
   });
 
@@ -35,22 +37,28 @@ describe('inventario de rutas (deny by default)', () => {
     await assert.rejects(appWithRoute({ config: { permission: 'Users-View' }, schema: { response } }), /formato <recurso>.<acción>/);
   });
 
+  it('un permiso que no existe en el catálogo impide arrancar', async () => {
+    await assert.rejects(appWithRoute({ config: { permission: 'users.create' }, schema: { response } }), /no existe en el catálogo/);
+  });
+
   it('una ruta sin schema de respuesta impide arrancar', async () => {
     await assert.rejects(appWithRoute({ config: { permission: 'users.view' } }), /schema.response/);
   });
 
   it('un body que admite propiedades desconocidas impide arrancar (mass assignment)', async () => {
     await assert.rejects(
-      appWithRoute({ config: { permission: 'users.create' }, schema: { body: { type: 'object' }, response } }),
+      appWithRoute({ config: { permission: 'users.update' }, schema: { body: { type: 'object' }, response } }),
       /schema.body debe declarar additionalProperties: false/,
     );
   });
 
-  it('una ruta protegida responde 401 mientras no hay autenticación', async () => {
-    const app = await appWithRoute({ config: { permission: 'users.create' }, schema: { response } });
-    const res = await app.inject({ method: 'POST', url: '/api/v1/probe', payload: {} });
-    assert.equal(res.statusCode, 401);
-    assert.equal(res.json().error.code, 'AUTHENTICATION_REQUIRED');
+  it('una ruta protegida responde 401 sin una sesión válida', async () => {
+    const app = await appWithRoute({ config: { permission: 'users.update' }, schema: { response } });
+    for (const cookie of [undefined, '__Host-enviotec_session=corto', `__Host-enviotec_session=${'a'.repeat(43)}`]) {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/probe', payload: {}, headers: cookie ? { cookie } : {} });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error.code, 'AUTHENTICATION_REQUIRED');
+    }
     await app.close();
   });
 });

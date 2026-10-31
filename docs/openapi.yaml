@@ -8,7 +8,26 @@ info:
     Cada respuesta incluye `X-Request-Id` (generado por el servidor) y `Cache-Control: no-store`.
 servers:
   - url: /
+security:
+  - session: []
 paths:
+  /api/v1/permissions:
+    get:
+      summary: Catálogo de permisos
+      description: Catálogo completo (pequeño y fijo, cargado por seed), sin paginación.
+      operationId: listPermissions
+      x-enviotec-permission: permissions.view
+      responses:
+        '200':
+          description: Catálogo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /health/live:
     get:
       summary: El proceso está vivo
@@ -43,7 +62,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: __Host-enviotec_session
+      description: Token de sesión opaco (ADR-002). En la base solo se guarda su hash SHA-256.
+  responses:
+    Unauthenticated:
+      description: Sin sesión válida (ausente, revocada, vencida o de un usuario inactivo)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: La sesión no tiene el permiso requerido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
+    PermissionList:
+      type: object
+      additionalProperties: false
+      required: [success, data, meta]
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, description, administrative]
+            properties:
+              code: { type: string, example: users.view }
+              description: { type: string }
+              administrative: { type: boolean, description: Exige MFA y solo se asigna a cuentas locales }
+        meta:
+          type: object
+          additionalProperties: false
+          required: [total]
+          properties:
+            total: { type: integer }
     HealthLive:
       type: object
       additionalProperties: false

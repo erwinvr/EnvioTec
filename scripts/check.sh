@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 
 GITLEAKS_IMAGE="zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 TRIVY_IMAGE="aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c"
-SCANNED_IMAGES=(enviotec/backend:local enviotec/nginx:local enviotec/egress-proxy:local)
+SCANNED_IMAGES=(enviotec/backend:local enviotec/nginx:local enviotec/egress-proxy:local enviotec/tools:local)
 
 # Separate project, secrets and subnets, so the check never touches a running
 # development stack.
@@ -27,30 +27,38 @@ trap cleanup EXIT
 
 step() { printf '\n==> %s\n' "$1"; }
 
-step "1/8 npm ci"
+step "1/10 npm ci"
 npm ci --no-audit --no-fund
 
-step "2/8 Lint"
+step "2/10 Lint"
 npm run lint
 
-step "3/8 Secretos efímeros para el entorno de verificación"
+step "3/10 Secretos efímeros para el entorno de verificación"
 bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force
 
-step "4/8 Construcción de imágenes y arranque del stack"
+step "4/10 Construcción de imágenes y arranque del stack"
 "${COMPOSE[@]}" --profile check build
 "${COMPOSE[@]}" up -d --wait --wait-timeout 180 nginx backend worker postgres redis egress-proxy
 
-step "5/8 Tests unitarios, de integración y de seguridad (con cobertura)"
+step "5/10 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
+"${COMPOSE[@]}" --profile check run --rm tools node scripts/migrate.js verify
+"${COMPOSE[@]}" --profile check run --rm tools node scripts/seed.js system
+
+step "6/10 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
+"${COMPOSE[@]}" --profile check run --rm tools node --test --test-concurrency=1 "tests/**/*.test.js"
+
+step "7/10 Tests unitarios, de integración y de seguridad del backend (con cobertura)"
 "${COMPOSE[@]}" --profile check run --rm tests
 
-step "6/8 Auditoría de dependencias"
+step "8/10 Auditoría de dependencias"
 npm audit --audit-level=high
 (cd backend && npm audit --audit-level=high)
+(cd database && npm audit --audit-level=high)
 
-step "7/8 Detección de secretos en el historial de Git"
+step "9/10 Detección de secretos en el historial de Git"
 docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact --no-banner
 
-step "8/8 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
+step "10/10 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
 for image in "${SCANNED_IMAGES[@]}"; do
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \

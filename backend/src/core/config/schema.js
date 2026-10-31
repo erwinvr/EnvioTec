@@ -8,6 +8,7 @@ export const PROPERTIES = {
   PORT: { type: 'integer', minimum: 1, maximum: 65535, default: 3000 },
   LOG_LEVEL: { type: 'string', enum: LOG_LEVELS },
   DATABASE_URL: { type: 'string', pattern: '^postgres(ql)?://.+' },
+  MIGRATION_DATABASE_URL: { type: 'string', pattern: '^postgres(ql)?://.+' },
   DATABASE_POOL_MAX: { type: 'integer', minimum: 1, maximum: 100, default: 10 },
   DATABASE_STATEMENT_TIMEOUT_MS: { type: 'integer', minimum: 100, maximum: 600000, default: 10000 },
   REDIS_URL: { type: 'string', pattern: '^rediss?://.+' },
@@ -25,7 +26,9 @@ export const PROPERTIES = {
 };
 
 // Variables that may come from a Docker secret file (<NAME>_FILE).
-export const SECRET_KEYS = new Set(['DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY']);
+export const SECRET_KEYS = new Set([
+  'DATABASE_URL', 'MIGRATION_DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY',
+]);
 
 // Each process receives only the variables it needs (least privilege).
 export const PROFILES = {
@@ -41,5 +44,10 @@ export const PROFILES = {
   worker: {
     required: ['NODE_ENV', 'DATABASE_URL', 'REDIS_URL'],
     optional: ['LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS'],
+  },
+  // Migrations, seeds and bootstrap (database/scripts), with the app_owner user.
+  tools: {
+    required: ['NODE_ENV', 'MIGRATION_DATABASE_URL'],
+    optional: ['LOG_LEVEL', 'ARGON2_MEMORY_KIB', 'ARGON2_ITERATIONS', 'ARGON2_PARALLELISM'],
   },
 };

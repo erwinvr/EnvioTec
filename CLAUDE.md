@@ -16,10 +16,10 @@ Si algo de la Parte B contradice la Parte A, detente, explica el conflicto y pro
 
 ## Estado del proyecto
 
-- **Fase actual:** 2 — Base de datos y RBAC. Plan presentado, pendiente de confirmación.
+- **Fase actual:** 3 — Autenticación. Plan pendiente de aprobación.
 - **En paralelo:** 0.5 — Spike de Mandrill, plan aprobado; en espera de una API key válida (`MANDRILL_API_KEY` como variable de entorno), remitente del subdominio verificado y buzón de prueba (erwin.villazon@gmail.com).
-- **Fases aprobadas:** 1 — Base del proyecto (2026-10-31; `npm run check` en verde, ADR-015 aceptado). 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
-- **Siguiente paso:** confirmar el plan de la Fase 2 y ejecutarla.
+- **Fases aprobadas:** 2 — Base de datos y RBAC (2026-10-31; `npm run check` en verde, ADR-016 y ADR-017 aceptados). 1 — Base del proyecto (2026-10-31; `npm run check` en verde, ADR-015 aceptado). 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
+- **Siguiente paso:** aprobación del plan de la Fase 3; después, implementarla.
 
 Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases aprobadas, siguiente paso).
 
@@ -52,4 +52,6 @@ Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases apr
 - `docker compose -f docker-compose.yml up -d --build --wait`: stack de producción, sin override.
 - `npm run lint`: ESLint.
 - `npm run check`: npm ci, lint, stack aislado, tests con cobertura, npm audit, gitleaks y Trivy. Es lo que ejecutará Jenkins.
-- Migraciones y seeds: se definen en la Fase 2.
+- `docker compose run --rm tools node scripts/migrate.js up` (también `down [n|all]` y `verify`): migraciones con `app_owner`.
+- `docker compose run --rm tools node scripts/seed.js system` / `node scripts/seed.js dev`: catálogo de permisos, roles y parámetros / datos de desarrollo.
+- `docker compose run --rm -it tools node scripts/bootstrap-admin.js` / `--emergency`: superadmin inicial / cuenta de emergencia.

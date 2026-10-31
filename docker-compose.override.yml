@@ -3,7 +3,8 @@
 services:
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: dev
     image: enviotec/backend:dev
     command: ["node", "--watch", "src/server.js"]
@@ -15,7 +16,8 @@ services:
 
   worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: dev
     image: enviotec/backend:dev
     command: ["node", "--watch", "src/worker.js"]
@@ -24,6 +26,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
     volumes:
       - ./backend/src:/app/src:ro
+
+  tools:
+    environment:
+      NODE_ENV: development
 
   # Database and Redis reachable from the host, on localhost only.
   postgres:

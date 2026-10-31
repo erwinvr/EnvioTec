@@ -1,6 +1,18 @@
-# Build context of proxy/Dockerfile (repository root): only what the image needs.
+# Shared build context (repository root) of proxy/Dockerfile and
+# backend/Dockerfile: an allowlist of what the images need. Secrets, .env,
+# node_modules and Git never enter an image.
 *
 !proxy/default.conf
 !proxy/snippets/
 !frontend/public/
 !frontend/src/
+!backend/package.json
+!backend/package-lock.json
+!backend/src/
+!backend/tests/
+!database/package.json
+!database/package-lock.json
+!database/migrations/
+!database/seeds/
+!database/scripts/
+!database/tests/

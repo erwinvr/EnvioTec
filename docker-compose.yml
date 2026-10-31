@@ -10,7 +10,8 @@ x-hardening: &hardening
   restart: unless-stopped
 
 x-backend-build: &backend-build
-  context: ./backend
+  context: .
+  dockerfile: backend/Dockerfile
   target: runtime
 
 services:
@@ -100,6 +101,28 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.00", memory: 512M }
+
+  # One-off tasks (ADR-017): migrations, seeds and bootstrap, with the
+  # app_owner user. Not started by `docker compose up`:
+  #   docker compose run --rm tools node scripts/migrate.js up
+  tools:
+    <<: *hardening
+    restart: "no"
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: tools
+    image: enviotec/tools:local
+    profiles: [tools]
+    tmpfs: [/tmp]
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+    secrets: [migration_database_url]
+    networks: [data]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres:
     <<: *hardening

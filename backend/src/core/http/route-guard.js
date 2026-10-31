@@ -1,13 +1,13 @@
-import { AuthenticationError } from '../errors/errors.js';
-
 const PERMISSION_PATTERN = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const INPUT_SCHEMAS = ['body', 'querystring', 'params', 'headers'];
 
 // Every route must declare exactly one of `config.public: true` or
-// `config.permission: '<resource>.<action>'`, plus a response schema, and its
-// input schemas must reject unknown properties. A route that does not comply
-// stops the application from starting (deny by default, A6).
-export function assertRouteDeclaration(route) {
+// `config.permission: '<resource>.<action>'` with a permission that exists in
+// the catalog, plus a response schema, and its input schemas must reject
+// unknown properties. A route that does not comply stops the application from
+// starting (deny by default, A6). The permission is enforced on each request
+// by core/authorization/authorization.js.
+export function assertRouteDeclaration(route, knownPermissions) {
   const name = `${route.method} ${route.url}`;
   const config = route.config ?? {};
   const isPublic = config.public === true;
@@ -18,6 +18,9 @@ export function assertRouteDeclaration(route) {
   }
   if (hasPermission && !PERMISSION_PATTERN.test(config.permission)) {
     throw new Error(`Ruta ${name}: el permiso "${config.permission}" no tiene el formato <recurso>.<acción>`);
+  }
+  if (hasPermission && !knownPermissions.has(config.permission)) {
+    throw new Error(`Ruta ${name}: el permiso "${config.permission}" no existe en el catálogo`);
   }
   if (!route.schema?.response) {
     throw new Error(`Ruta ${name}: debe declarar schema.response`);
@@ -30,23 +33,17 @@ export function assertRouteDeclaration(route) {
   }
 }
 
-export function registerRouteGuard(app) {
+export function registerRouteGuard(app, { knownPermissions }) {
   const inventory = [];
   app.decorate('routeInventory', inventory);
 
   app.addHook('onRoute', (route) => {
-    assertRouteDeclaration(route);
+    assertRouteDeclaration(route, knownPermissions);
     inventory.push({
       method: route.method,
       url: route.url,
       public: route.config.public === true,
       permission: route.config.permission ?? null,
     });
-  });
-
-  // Until authentication exists (phase 3), any non-public route is denied.
-  app.addHook('onRequest', async (request) => {
-    if (request.is404 || request.routeOptions.config?.public === true) return;
-    throw new AuthenticationError();
   });
 }

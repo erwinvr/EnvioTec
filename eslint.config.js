@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ['backend/**/*.js', 'spikes/**/*.mjs', 'eslint.config.js'],
+    files: ['backend/**/*.js', 'database/**/*.js', 'spikes/**/*.mjs', 'eslint.config.js'],
     languageOptions: { globals: nodeGlobals },
     ...security.configs.recommended,
     rules: {

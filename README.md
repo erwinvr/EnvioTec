@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 1 (base del proyecto). Todavía no hay login ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 2 (base de datos y RBAC). Todavía no hay login (Fase 3) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -46,6 +46,18 @@ npm run secrets:dev            # genera ./secrets (aleatorios) y un certificado 
 docker compose up -d --build --wait
 curl --cacert secrets/tls_cert https://localhost/health/ready
 ```
+
+Base de datos (la primera vez y después de cada cambio de migraciones):
+
+```bash
+docker compose run --rm tools node scripts/migrate.js up     # aplica migraciones (usuario app_owner)
+docker compose run --rm tools node scripts/seed.js system       # permisos, roles iniciales y parámetros
+docker compose run --rm tools node scripts/seed.js dev          # áreas de ejemplo (solo desarrollo)
+docker compose run --rm -it tools node scripts/bootstrap-admin.js       # superadmin inicial (pide los datos)
+docker compose run --rm -it tools node scripts/bootstrap-admin.js --emergency   # cuenta de emergencia
+```
+
+El bootstrap no tiene credenciales por defecto: pide usuario, email, nombre, área y contraseña (sin mostrarla), y la valida con la política de contraseñas. Solo crea el superadmin si todavía no existe uno. Otros comandos de migración: `node scripts/migrate.js down [n|all]` y `node scripts/migrate.js verify`.
 
 Abrir `https://localhost` en el navegador (aceptar el certificado autofirmado o importar `secrets/tls_cert`).
 
@@ -101,18 +113,21 @@ Ejecuta, en orden y deteniéndose en el primer fallo:
 2. Lint (ESLint con `eslint-plugin-security` en el backend y prohibición de sinks HTML en el frontend)
 3. Secretos efímeros para el entorno de verificación
 4. Construcción de imágenes y arranque del stack completo (proyecto Compose aparte, sin puertos publicados)
-5. Tests unitarios, de integración y de seguridad dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core`
-6. `npm audit --audit-level=high` (raíz y backend)
-7. gitleaks sobre el historial de Git
-8. Trivy sobre las imágenes `backend`, `nginx` y `egress-proxy` (altas y críticas con corrección disponible)
+5. Migraciones: aplicar, revertir todo y volver a aplicar sobre la base vacía; seed de sistema
+6. Tests de base de datos (`database/tests`): privilegios de `app_runtime`, triggers, restricciones, seeds y bootstrap
+7. Tests unitarios, de integración y de seguridad del backend dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core`
+8. `npm audit --audit-level=high` (raíz, backend y database)
+9. gitleaks sobre el historial de Git
+10. Trivy sobre las imágenes `backend`, `nginx`, `egress-proxy` y `tools` (altas y críticas con corrección disponible)
 
 No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proyecto, otras subredes y otros secretos, y los borra al terminar. Necesita salida a internet (paquetes npm, base de Trivy y el test que verifica el túnel hacia Mandrill).
 
 ## Tests
 
 - `backend/tests/unit`: configuración, logger, errores, health con dependencias simuladas.
-- `backend/tests/integration`: health con PostgreSQL y Redis reales; permisos del usuario de base de datos y del usuario de Redis.
+- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito) y estados de sesión inválidos; usuario de Redis.
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
+- `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
 
 Los tests de integración y los del stack se ejecutan solo dentro de `npm run check`; fuera de él aparecen como omitidos.
 
@@ -126,6 +141,7 @@ backend/            API y worker (Fastify, Node.js 26)
 frontend/           HTML + JS Vanilla (ES Modules), servido por nginx
 proxy/              configuración de nginx y su Dockerfile
 infra/              egress-proxy (Squid) y arranque de Redis con ACL
+database/           migraciones, seeds (system/dev), scripts (migrate, seed, bootstrap) y sus tests
 database/init/      creación de roles de PostgreSQL (una vez, al crear el volumen)
 scripts/            generación de secretos y npm run check
 spikes/mandrill/    scripts de exploración de la fase 0.5 (no son código de producción)

@@ -187,3 +187,36 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - Nginx necesita una red no interna para publicar puertos y por eso tiene ruta de salida. En producción se bloquea con firewall del host (ADR-015, runbook de la Fase 9).
 - Trivy se ejecuta con `--ignore-unfixed`: las vulnerabilidades sin corrección publicada no detienen el check. Se revisan en la Fase 9.
 - Los secretos de desarrollo son legibles por otros usuarios dentro de los contenedores (los secretos de Compose fuera de Swarm conservan los permisos del host); el directorio `secrets/` tiene permisos 700 en el host. En producción se aplica lo mismo; se documenta en el runbook.
+
+### Fase 2 — Base de datos y RBAC (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A6 (401/403) | `requirePermission` por ruta: sin sesión válida 401, sin permiso 403; permisos efectivos cargados en cada request | `integration/authorization-matrix.test.js` (la matriz falla si una ruta protegida no tiene caso) |
+| A6 (catálogo) | Una ruta con un permiso que no existe en el catálogo impide arrancar; el seed falla si la base tiene permisos que el código no declara | `route-inventory.test.js`, `database/tests/seed-and-bootstrap.test.js` |
+| T8 / A5 (sesión) | Token de 256 bits; en la base solo su SHA-256 (CHECK de 32 bytes); sesión inválida si está revocada, vencida por inactividad o por tiempo absoluto, o si el usuario está desactivado, borrado, bloqueado o vencido | `authorization-matrix.test.js`, `unit/authorization.test.js` |
+| T15 / A7 | `app_runtime` solo `INSERT`/`SELECT` en `audit_logs`; triggers rechazan `UPDATE`, `DELETE` y `TRUNCATE` incluso para el dueño | `database/tests/runtime-privileges.test.js`, `constraints.test.js` |
+| A4 (mínimo privilegio) | `app_runtime` sin DDL, sin escritura en `permissions`, y en `system_settings` solo puede cambiar el valor | `runtime-privileges.test.js` |
+| T35 / ADR-007 | Triggers: un rol administrativo no se asigna a una cuenta de AD ni desde un grupo de AD; un rol usado desde AD no recibe permisos administrativos; el rol de sistema no se borra, no se renombra ni pierde permisos | `constraints.test.js` |
+| Parte B (origen único) | CHECKs: una cuenta de AD sin contraseña y con `objectGUID`; una local con contraseña, área y vigencia (salvo exención); `auth_source` inmutable; usuario y email únicos sin distinguir mayúsculas | `constraints.test.js` |
+| A4 (integridad) | FKs restrictivas (un rol asignado no se borra), índices en cada FK, rangos de parámetros validados por la base | `constraints.test.js`, `runtime-privileges.test.js` |
+| ADR-008 | Helper de alcance por área: condición parametrizada; sin área ni `areas.view_all` se niega el acceso; nombres de columna validados | `unit/authorization.test.js` |
+| A5 (contraseñas) | Argon2id nativo en formato PHC, comparación en tiempo constante, rehash por cambio de parámetros, entrada limitada; política de 12 a 128 caracteres con lista de comunes y sus variantes (ADR-016) | `unit/password.test.js` |
+| A6 (bootstrap) | Sin credenciales por defecto; el superadmin se crea una sola vez y la cuenta de emergencia también; la contraseña nunca se pasa por argumento ni por variable de entorno | `seed-and-bootstrap.test.js` |
+| A11.8 | Las migraciones aplican, revierten y vuelven a aplicar sobre una base vacía | `npm run check` (paso 5) |
+
+**Pendiente para fases siguientes:**
+
+- Auditoría de cada 403, del bootstrap y de los cambios de seed (Fase 4, con el servicio de auditoría y la cadena de hash).
+- MFA obligatorio para roles administrativos, `campaigns.submit` y `campaigns.approve`; login, CSRF y rate limiting (Fase 3). En esta fase las sesiones solo se validan; ninguna ruta las crea.
+- Creación de particiones futuras de `audit_logs` por el worker (R12). La migración crea 13 meses; no hay partición por defecto: si falta una partición, la escritura de auditoría falla y con ella la acción (falla segura).
+- Reglas anti-escalamiento del service (no otorgar permisos que no se tienen, no modificar los propios roles, último superadmin): Fases 5 y 6.
+
+**Hallazgos de la fase:**
+
+- Los tests de base de datos y la matriz usan las credenciales de `app_owner` dentro del entorno de verificación (para crear fixtures y probar que los triggers resisten incluso al dueño). Esas credenciales solo existen en `.check-secrets/`, que se genera y se borra en cada ejecución.
+- `app_owner` puede desactivar triggers (`ALTER TABLE … DISABLE TRIGGER`) por ser dueño de las tablas. Se acepta: solo lo usan las migraciones, y la cadena de hash de la Fase 4 detecta cualquier alteración posterior.
+- Trivy encontró 6 vulnerabilidades altas (`brace-expansion`, `undici`) en el npm que trae la imagen base de Node, dentro de la imagen `tools`. Se eliminó npm de `tools` (como ya se hacía en `runtime`) y los scripts se ejecutan con `node`.
+- `npm audit` informa avisos moderados sin corrección compatible: `minimatch` (dependencia de ESLint, solo desarrollo) y `glob` (dependencia de `node-pg-migrate`, que solo lista el directorio fijo de migraciones, sin entrada del usuario). No llegan al umbral alto de A11; se revisan en la Fase 9.

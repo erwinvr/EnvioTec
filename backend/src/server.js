@@ -15,6 +15,7 @@ await redis.connect();
 const app = await buildApp({
   config,
   logger,
+  db: pool,
   checks: {
     database: () => pool.query('SELECT 1'),
     redis: () => redis.ping(),

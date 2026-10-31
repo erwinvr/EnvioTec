@@ -33,7 +33,11 @@ export function memoryLogger() {
 
 export const healthyChecks = { database: async () => {}, redis: async () => {} };
 
-export async function buildTestApp({ checks = healthyChecks, extraPlugins = [], logger } = {}) {
+// Database double for unit tests: every query returns no rows, so no session
+// is ever valid. Tests with a real database live in tests/integration.
+export const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) };
+
+export async function buildTestApp({ checks = healthyChecks, extraPlugins = [], logger, db = emptyDb } = {}) {
   const config = loadConfig(validEnv());
-  return buildApp({ config, logger: logger ?? pino({ level: 'silent' }), checks, extraPlugins });
+  return buildApp({ config, logger: logger ?? pino({ level: 'silent' }), db, checks, extraPlugins });
 }

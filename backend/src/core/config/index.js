@@ -130,17 +130,19 @@ function isOrigin(value) {
   }
 }
 
+// Builds the configuration object with only the sections whose variables
+// belong to the profile.
 function buildConfig(raw) {
-  const config = {
-    env: raw.NODE_ENV,
-    logLevel: raw.LOG_LEVEL,
-    database: {
+  const config = { env: raw.NODE_ENV, logLevel: raw.LOG_LEVEL };
+  if (raw.DATABASE_URL !== undefined) {
+    config.database = {
       url: raw.DATABASE_URL,
       poolMax: raw.DATABASE_POOL_MAX,
       statementTimeoutMs: raw.DATABASE_STATEMENT_TIMEOUT_MS,
-    },
-    redis: { url: raw.REDIS_URL },
-  };
+    };
+  }
+  if (raw.MIGRATION_DATABASE_URL !== undefined) config.migrationDatabaseUrl = raw.MIGRATION_DATABASE_URL;
+  if (raw.REDIS_URL !== undefined) config.redis = { url: raw.REDIS_URL };
   if (raw.PORT !== undefined) config.port = raw.PORT;
   if (raw.APP_ORIGIN !== undefined) {
     config.security = {
@@ -153,14 +155,16 @@ function buildConfig(raw) {
       idleTimeoutMin: raw.SESSION_IDLE_TIMEOUT_MIN,
       absoluteTimeoutMin: raw.SESSION_ABSOLUTE_TIMEOUT_MIN,
     };
+    config.rateLimit = {
+      loginPerIp: raw.RATE_LIMIT_LOGIN_PER_IP,
+      loginPerAccount: raw.RATE_LIMIT_LOGIN_PER_ACCOUNT,
+    };
+  }
+  if (raw.ARGON2_MEMORY_KIB !== undefined) {
     config.argon2 = {
       memoryKib: raw.ARGON2_MEMORY_KIB,
       iterations: raw.ARGON2_ITERATIONS,
       parallelism: raw.ARGON2_PARALLELISM,
-    };
-    config.rateLimit = {
-      loginPerIp: raw.RATE_LIMIT_LOGIN_PER_IP,
-      loginPerAccount: raw.RATE_LIMIT_LOGIN_PER_ACCOUNT,
     };
   }
   return deepFreeze(config);

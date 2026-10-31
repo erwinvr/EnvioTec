@@ -9,7 +9,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: dev
     image: enviotec/backend:dev
     profiles: [check]
@@ -19,6 +20,7 @@ services:
       NODE_ENV: test
       RUN_INTEGRATION: "1"
       DATABASE_URL_FILE: /run/secrets/database_url
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
       REDIS_URL_FILE: /run/secrets/redis_url_backend
       CSRF_SECRET_FILE: /run/secrets/csrf_secret
       DATA_ENCRYPTION_KEY_FILE: /run/secrets/data_encryption_key
@@ -29,10 +31,19 @@ services:
       EDGE_CA_FILE: /run/secrets/tls_cert
       EGRESS_PROXY: egress-proxy:3128
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
-    secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key, tls_cert]
+    secrets: [database_url, migration_database_url, redis_url_backend, csrf_secret, data_encryption_key, tls_cert]
     networks: [edge, data, egress]
     depends_on:
       nginx:
         condition: service_healthy
       egress-proxy:
         condition: service_healthy
+
+  # Database tests (database/tests) run in the tools image, which contains the
+  # migrations and seeds. They need the owner and the runtime connections.
+  tools:
+    profiles: [tools, check]
+    environment:
+      NODE_ENV: test
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [migration_database_url, database_url]
