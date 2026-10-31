@@ -150,3 +150,7 @@ vite.config.ts.timestamp-*
 
 # Spike de Mandrill: resultados locales (contienen direcciones de prueba)
 spikes/mandrill/out/
+
+# EnvioTec: secretos locales (desarrollo y entorno de verificación)
+secrets/
+.check-secrets/

@@ -1,0 +1,95 @@
+openapi: 3.1.0
+info:
+  title: EnvioTec API
+  version: 0.1.0
+  description: |
+    API interna de EnvioTec. Todas las respuestas usan el formato único:
+    `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
+    Cada respuesta incluye `X-Request-Id` (generado por el servidor) y `Cache-Control: no-store`.
+servers:
+  - url: /
+paths:
+  /health/live:
+    get:
+      summary: El proceso está vivo
+      operationId: healthLive
+      security: []
+      x-enviotec-public: true
+      responses:
+        '200':
+          description: Vivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthLive'
+  /health/ready:
+    get:
+      summary: El backend puede atender (PostgreSQL y Redis responden)
+      description: No indica qué dependencia falló; eso queda en los logs del servidor.
+      operationId: healthReady
+      security: []
+      x-enviotec-public: true
+      responses:
+        '200':
+          description: Listo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReady'
+        '503':
+          description: Alguna dependencia no está disponible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    HealthLive:
+      type: object
+      additionalProperties: false
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { type: string, enum: [ok] }
+    HealthReady:
+      type: object
+      additionalProperties: false
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { type: string, enum: [ready] }
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, const: false }
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR, BAD_REQUEST, AUTHENTICATION_REQUIRED, FORBIDDEN, NOT_FOUND,
+                     CONFLICT, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED,
+                     INTERNAL_ERROR, SERVICE_UNAVAILABLE]
+            message: { type: string }
+            requestId: { type: string, format: uuid }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, code]
+                properties:
+                  field: { type: string }
+                  code: { type: string }
+                  location: { type: string, enum: [body, querystring, params, headers] }

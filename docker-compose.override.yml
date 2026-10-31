@@ -1,0 +1,35 @@
+# Development only. Docker Compose applies this file automatically with
+# `docker compose up`. Never used in production or in scripts/check.sh.
+services:
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    image: enviotec/backend:dev
+    command: ["node", "--watch", "src/server.js"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    volumes:
+      - ./backend/src:/app/src:ro
+
+  worker:
+    build:
+      context: ./backend
+      target: dev
+    image: enviotec/backend:dev
+    command: ["node", "--watch", "src/worker.js"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    volumes:
+      - ./backend/src:/app/src:ro
+
+  # Database and Redis reachable from the host, on localhost only.
+  postgres:
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    networks: [data, public]
+
+  redis:
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
+    networks: [data, public]

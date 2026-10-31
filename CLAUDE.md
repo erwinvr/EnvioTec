@@ -16,9 +16,10 @@ Si algo de la Parte B contradice la Parte A, detente, explica el conflicto y pro
 
 ## Estado del proyecto
 
-- **Fase actual:** 0.5 — Spike de Mandrill (sin código de producción). Plan presentado, pendiente de confirmación.
-- **Fases aprobadas:** 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
-- **Siguiente paso:** confirmar el plan de la fase 0.5 y recibir las API keys de Mandrill; después, Fase 1.
+- **Fase actual:** 2 — Base de datos y RBAC. Plan presentado, pendiente de confirmación.
+- **En paralelo:** 0.5 — Spike de Mandrill, plan aprobado; en espera de una API key válida (`MANDRILL_API_KEY` como variable de entorno), remitente del subdominio verificado y buzón de prueba (erwin.villazon@gmail.com).
+- **Fases aprobadas:** 1 — Base del proyecto (2026-10-31; `npm run check` en verde, ADR-015 aceptado). 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
+- **Siguiente paso:** confirmar el plan de la Fase 2 y ejecutarla.
 
 Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases aprobadas, siguiente paso).
 
@@ -45,9 +46,10 @@ Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases apr
 
 ## Comandos
 
-Se definen en la Fase 1. Deben existir como mínimo:
-
-- `npm run check`: lint, tests, auditoría de dependencias y detección de secretos (lo que luego ejecutará Jenkins).
-- Comandos para levantar el entorno con Docker, correr migraciones y seeds.
-
-Documenta aquí los comandos exactos cuando se creen.
+- `npm ci`: herramientas de lint en el host.
+- `npm run secrets:dev`: genera `./secrets` (aleatorios) y un certificado autofirmado. `-- --force` los regenera (después, `docker compose down -v`).
+- `docker compose up -d --build --wait`: stack de desarrollo (aplica `docker-compose.override.yml`).
+- `docker compose -f docker-compose.yml up -d --build --wait`: stack de producción, sin override.
+- `npm run lint`: ESLint.
+- `npm run check`: npm ci, lint, stack aislado, tests con cobertura, npm audit, gitleaks y Trivy. Es lo que ejecutará Jenkins.
+- Migraciones y seeds: se definen en la Fase 2.

@@ -18,3 +18,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [012](012-vista-previa-aislada.md) | Vista previa aislada con CSP propia | Aceptado |
 | [013](013-variables-y-merge.md) | Lenguaje de merge y escape de variables | Aceptado (sujeto al spike) |
 | [014](014-riesgos-aceptados.md) | Riesgos aceptados por el negocio | Aceptado |
+| [015](015-squid-como-proxy-de-egreso.md) | Squid como proxy de egreso | Aceptado |

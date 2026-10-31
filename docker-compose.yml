@@ -1,0 +1,195 @@
+# EnvioTec — base stack (production-like). Development additions live in
+# docker-compose.override.yml; the check environment in docker-compose.check.yml.
+# No real secret lives here: every secret comes from files in ${SECRETS_DIR}.
+name: enviotec
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+x-backend-build: &backend-build
+  context: ./backend
+  target: runtime
+
+services:
+  nginx:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    image: enviotec/nginx:local
+    tmpfs: [/tmp]
+    ports:
+      - "${HTTPS_PORT:-443}:8443"
+      - "${HTTP_PORT:-80}:8080"
+    secrets: [tls_cert, tls_key]
+    networks:
+      public: {}
+      edge:
+        ipv4_address: ${NGINX_IP:-172.31.10.10}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/_nginx_health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 128M }
+
+  backend:
+    <<: *hardening
+    build: *backend-build
+    image: enviotec/backend:local
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url_backend
+      CSRF_SECRET_FILE: /run/secrets/csrf_secret
+      DATA_ENCRYPTION_KEY_FILE: /run/secrets/data_encryption_key
+      TRUST_PROXY: ${NGINX_IP:-172.31.10.10}
+      APP_ORIGIN: ${APP_ORIGIN:-https://localhost}
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: postgres,redis,localhost,127.0.0.1
+    secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key]
+    networks: [edge, data, egress]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.00", memory: 512M }
+
+  worker:
+    <<: *hardening
+    build: *backend-build
+    image: enviotec/backend:local
+    init: true
+    command: ["node", "src/worker.js"]
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url_worker
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: postgres,redis,localhost,127.0.0.1
+    secrets: [database_url, redis_url_worker]
+    networks: [data, egress]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.00", memory: 512M }
+
+  postgres:
+    <<: *hardening
+    image: postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    user: postgres
+    environment:
+      POSTGRES_DB: enviotec
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    tmpfs: [/var/run/postgresql, /tmp]
+    secrets: [postgres_password, db_owner_password, db_runtime_password]
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "enviotec"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1.00", memory: 1G }
+
+  redis:
+    <<: *hardening
+    image: redis:8.10.3-alpine3.23@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    user: redis
+    entrypoint: ["sh", "/usr/local/etc/redis/start.sh"]
+    volumes:
+      - redisdata:/data
+      - ./infra/redis/start.sh:/usr/local/etc/redis/start.sh:ro
+    tmpfs: [/tmp]
+    secrets: [redis_backend_password, redis_worker_password]
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user healthcheck --pass healthcheck --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 384M }
+
+  egress-proxy:
+    <<: *hardening
+    build: ./infra/egress-proxy
+    image: enviotec/egress-proxy:local
+    tmpfs: [/tmp, /var/cache/squid, /var/log/squid, /var/run/squid]
+    networks: [egress, outbound]
+    healthcheck:
+      # A plain HTTP request must be denied (403): proves squid applies its rules.
+      test: ["CMD-SHELL", "printf 'GET http://healthcheck/ HTTP/1.0\\r\\n\\r\\n' | nc -w 3 127.0.0.1 3128 | head -n 1 | grep -q ' 403 '"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 128M }
+
+networks:
+  # Published ports need a non-internal network. Only nginx joins it.
+  public: {}
+  # Only the egress proxy has a route to the internet.
+  outbound: {}
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.31.10.0/24}
+  data:
+    internal: true
+  egress:
+    internal: true
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+
+secrets:
+  postgres_password: { file: "${SECRETS_DIR:-./secrets}/postgres_password" }
+  db_owner_password: { file: "${SECRETS_DIR:-./secrets}/db_owner_password" }
+  db_runtime_password: { file: "${SECRETS_DIR:-./secrets}/db_runtime_password" }
+  database_url: { file: "${SECRETS_DIR:-./secrets}/database_url" }
+  migration_database_url: { file: "${SECRETS_DIR:-./secrets}/migration_database_url" }
+  redis_backend_password: { file: "${SECRETS_DIR:-./secrets}/redis_backend_password" }
+  redis_worker_password: { file: "${SECRETS_DIR:-./secrets}/redis_worker_password" }
+  redis_url_backend: { file: "${SECRETS_DIR:-./secrets}/redis_url_backend" }
+  redis_url_worker: { file: "${SECRETS_DIR:-./secrets}/redis_url_worker" }
+  csrf_secret: { file: "${SECRETS_DIR:-./secrets}/csrf_secret" }
+  data_encryption_key: { file: "${SECRETS_DIR:-./secrets}/data_encryption_key" }
+  tls_cert: { file: "${SECRETS_DIR:-./secrets}/tls_cert" }
+  tls_key: { file: "${SECRETS_DIR:-./secrets}/tls_key" }

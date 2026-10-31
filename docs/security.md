@@ -153,3 +153,37 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 | R12 | Particiones mensuales con retención perpetua | El worker crea particiones con meses de anticipación; alerta si falta alguna | Abierto (Fase 2/8) |
 | R13 | Entregabilidad: SPF, DKIM y DMARC del subdominio | Coordinar con quien administra el DNS y la cuenta de Mailchimp | Abierto (fuera del código) |
 | R14 | Herramientas de `npm run check` (Trivy, gitleaks) | Se ejecutan como contenedores; requiere Docker donde corra Jenkins | Abierto (Fase 1) |
+
+## 7. Revisión de seguridad por fase
+
+### Fase 1 — Base del proyecto (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A6, deny by default | Toda ruta declara `public` o `permission`; si no, la app no arranca. Las rutas no públicas responden 401 hasta que exista autenticación | `tests/security/route-inventory.test.js` |
+| T11 (mass assignment) | Los schemas de entrada deben declarar `additionalProperties: false` o la app no arranca; ajv rechaza (no descarta) propiedades desconocidas | `route-inventory.test.js`, `error-exposure.test.js` |
+| Exposición de datos | Schema de respuesta obligatorio; los campos no declarados no se serializan | `error-exposure.test.js` |
+| T29 (errores detallados) | Manejador central: 500 genérico con `requestId`; el detalle queda solo en el log | `error-exposure.test.js`, `errors.test.js` |
+| T26 (secretos en logs) | Redacción en Pino de contraseñas, tokens, secretos, cookies y headers sensibles | `tests/unit/logger.test.js` |
+| T26 (secretos en código y Git) | Docker secrets con `<VAR>_FILE`; `secrets/` ignorado; gitleaks sobre el historial | `npm run check` (paso 7) |
+| A10 (configuración) | Validación al arrancar; secretos débiles o de ejemplo rechazados; mensajes sin valores | `tests/unit/config.test.js` |
+| A8 (proxy confiable) | `trustProxy` limitado a la IP de nginx; nginx sobrescribe `X-Forwarded-For` | `trust-proxy.test.js` |
+| A8 (headers) | CSP sin `unsafe-inline`/`unsafe-eval` con Trusted Types, HSTS, nosniff, COOP, CORP, Referrer-Policy, Permissions-Policy, en todas las respuestas; `Cache-Control: no-store` en la API | `edge.test.js`, `error-exposure.test.js` |
+| T5/V12 (transporte) | TLS 1.2+ en nginx; HTTP redirige a HTTPS; TLS 1.1 rechazado | `edge.test.js` |
+| A8 (DoS) | Límite de body 1 MB, timeouts de request y de nginx, `statement_timeout` en el pool y en el rol `app_runtime` | `error-exposure.test.js` (413), `integration/health.test.js` |
+| A4 (mínimo privilegio en BD) | Roles `app_owner` y `app_runtime` sin superusuario; la app usa `app_runtime` | `integration/health.test.js` |
+| ADR-003 (Redis) | ACL por servicio; `default` deshabilitado; comandos peligrosos denegados | `integration/health.test.js` |
+| T40 (egreso) | Redes internas sin ruta a internet; Squid solo permite CONNECT 443 a la allowlist | `tests/security/egress.test.js` |
+| A9 (frontend) | ESLint prohíbe `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `srcdoc`, `eval` y `localStorage`/`sessionStorage` | `npm run lint` |
+| A11 (contenedores) | Usuarios no root, `read_only`, `cap_drop: ALL`, `no-new-privileges`, límites de recursos, imágenes fijadas por digest, sin npm en la imagen de producción | Revisión de `docker-compose.yml` y Dockerfiles; Trivy |
+
+**Pendiente para fases siguientes:** autenticación, sesiones, CSRF y rate limiting (Fase 3); `requirePermission`, migraciones y protección de auditoría (Fases 2 y 4); procesamiento de archivos (Fase 8.1).
+
+**Hallazgos de la fase:**
+
+- La imagen base de nginx traía `brotli-libs` (crítica) y `curl` (alta) vulnerables. Se actualiza `brotli-libs` y se elimina `curl` en `proxy/Dockerfile`; quitar ese paso cuando la imagen base incluya las correcciones.
+- Nginx necesita una red no interna para publicar puertos y por eso tiene ruta de salida. En producción se bloquea con firewall del host (ADR-015, runbook de la Fase 9).
+- Trivy se ejecuta con `--ignore-unfixed`: las vulnerabilidades sin corrección publicada no detienen el check. Se revisan en la Fase 9.
+- Los secretos de desarrollo son legibles por otros usuarios dentro de los contenedores (los secretos de Compose fuera de Swarm conservan los permisos del host); el directorio `secrets/` tiene permisos 700 en el host. En producción se aplica lo mismo; se documenta en el runbook.

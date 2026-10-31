@@ -1,0 +1,6 @@
+# Build context of proxy/Dockerfile (repository root): only what the image needs.
+*
+!proxy/default.conf
+!proxy/snippets/
+!frontend/public/
+!frontend/src/
