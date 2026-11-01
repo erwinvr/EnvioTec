@@ -15,9 +15,12 @@ import { areasRoutes } from './modules/areas/areas.routes.js';
 import { auditLogsRoutes } from './modules/audit-logs/audit-logs.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { createAuthServices } from './modules/auth/auth.services.js';
+import { directoryRoutes } from './modules/directory/directory.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { PERMISSION_CATALOG, PERMISSION_CODES } from './modules/permission-catalog.js';
 import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
+import { rolesRoutes } from './modules/roles/roles.routes.js';
+import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 
 const BODY_LIMIT_BYTES = 1024 * 1024;
@@ -49,6 +52,7 @@ export async function buildApp({
 
   const audit = createAuditService();
   const mfaPolicy = createMfaPolicy(PERMISSION_CATALOG);
+  const ad = createAdProvider(config.ad, { clientFactory: adClientFactory, logger });
   const services = createAuthServices({
     db,
     config,
@@ -56,7 +60,7 @@ export async function buildApp({
     mfaPolicy,
     logger,
     limiter: createRateLimiter(redis),
-    ad: createAdProvider(config.ad, { clientFactory: adClientFactory, logger }),
+    ad,
     mailer: mailer ?? createMailer(config.mail, logger),
   });
 
@@ -78,6 +82,9 @@ export async function buildApp({
   await app.register(authRoutes, { services });
   await app.register(usersRoutes, { db, audit, config, services });
   await app.register(areasRoutes, { db, audit });
+  await app.register(rolesRoutes, { db, audit });
+  await app.register(directoryRoutes, { db, ad, audit });
+  await app.register(settingsRoutes, { db, audit });
   await app.register(permissionsRoutes, { db });
   await app.register(auditLogsRoutes, { db, audit });
   for (const plugin of extraPlugins) await app.register(plugin);

@@ -73,3 +73,14 @@ export const reviewResponse = successSchema({
     isEmergency: { type: 'boolean' }, inactiveDays: { type: 'integer' },
   }, ['id', 'username', 'displayName', 'areaName', 'lastLoginAt', 'expiresAt', 'exemptFromExpiry', 'isEmergency', 'inactiveDays']),
 }, pageMeta);
+
+export const effectivePermissionsResponse = successSchema(object({
+  mfaRequired: { type: 'boolean' },
+  permissions: {
+    type: 'array',
+    items: object({
+      code: { type: 'string' }, description: { type: 'string' }, administrative: { type: 'boolean' },
+      roles: { type: 'array', items: { type: 'string' } },
+    }, ['code', 'description', 'administrative', 'roles']),
+  },
+}, ['mfaRequired', 'permissions']));

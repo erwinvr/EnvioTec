@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -580,6 +580,207 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /api/v1/roles:
+    get:
+      summary: 'Listar roles'
+      operationId: listRoles
+      x-enviotec-permission: roles.view
+      responses:
+        '200': { description: Roles }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Crear un rol'
+      description: 'Con permisos iniciales exige re-autenticación; solo con permisos que el creador tiene (403 PRIVILEGE_ESCALATION, auditado).'
+      operationId: createRole
+      x-enviotec-permission: roles.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z][a-z0-9_-]{1,49}$' }
+                description: { type: string, maxLength: 500 }
+                permissions: { type: array, items: { type: string, example: campaigns.view } }
+      responses:
+        '201': { description: Rol creado }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/roles/{id}:
+    get:
+      summary: 'Detalle de un rol con permisos y grupos de AD'
+      operationId: getRole
+      x-enviotec-permission: roles.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Rol }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: 'Renombrar o describir un rol (el de sistema no se renombra)'
+      operationId: updateRole
+      x-enviotec-permission: roles.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: Rol }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Borrar un rol sin usuarios ni grupos de AD (el de sistema no se borra)'
+      description: 'Exige re-autenticación.'
+      operationId: deleteRole
+      x-enviotec-permission: roles.delete
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Borrado }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/roles/{id}/permissions:
+    put:
+      summary: 'Reemplazar los permisos de un rol'
+      description: 'Exige re-autenticación. 409 para el rol de sistema o un rol que el actor tiene; 403 PRIVILEGE_ESCALATION (auditado) para permisos que el actor no tiene; 422 para un permiso administrativo en un rol usado desde AD. Revoca las sesiones de los usuarios del rol.'
+      operationId: replaceRolePermissions
+      x-enviotec-permission: roles.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [permissions]
+              properties:
+                permissions: { type: array, items: { type: string, example: campaigns.view } }
+      responses:
+        '200': { description: Rol }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/permissions:
+    get:
+      summary: 'Permisos efectivos de un usuario y si exige MFA'
+      operationId: getUserEffectivePermissions
+      x-enviotec-permission: users.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Permisos con los roles que los otorgan }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/directory/mappings:
+    get:
+      summary: 'Equivalencias de grupos de AD a roles'
+      operationId: listDirectoryMappings
+      x-enviotec-permission: directory.manage
+      responses:
+        '200': { description: Equivalencias }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Asociar un grupo de AD a un rol de negocio'
+      description: 'DN validado; con AD habilitado el grupo debe existir. Los roles administrativos se rechazan. Se aplica en el siguiente login o revisión de AD.'
+      operationId: createDirectoryMapping
+      x-enviotec-permission: directory.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [groupDn, roleId]
+              properties:
+                groupDn: { type: string, maxLength: 500 }
+                roleId: { type: string, format: uuid }
+      responses:
+        '201': { description: Equivalencia creada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/directory/mappings/{id}:
+    delete:
+      summary: 'Quitar una equivalencia'
+      operationId: deleteDirectoryMapping
+      x-enviotec-permission: directory.manage
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Quitada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/settings:
+    get:
+      summary: 'Parámetros del sistema'
+      operationId: listSettings
+      x-enviotec-permission: settings.manage
+      responses:
+        '200': { description: Parámetros con valor, tipo, rango y descripción }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/settings/{key}:
+    patch:
+      summary: 'Cambiar un parámetro del sistema'
+      description: 'Exige re-autenticación. Valida rango, formato de listas y coherencia entre parámetros. Auditado con el valor anterior y el nuevo.'
+      operationId: updateSetting
+      x-enviotec-permission: settings.manage
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string, example: local_account.max_validity_days } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [value]
+              properties:
+                value: { oneOf: [{ type: integer }, { type: array, items: { type: string } }] }
+      responses:
+        '200': { description: Parámetro }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /api/v1/audit-logs:
     get:
       summary: Consultar la auditoría (vista global, sin filtro por área)

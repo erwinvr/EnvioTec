@@ -5,7 +5,9 @@ import { createSessionRepository } from '../../core/auth/session.repository.js';
 import { areaScopeFor } from '../../core/authorization/area-scope.js';
 import { assertRecentReauth } from '../../core/authorization/authorization.js';
 import { withTransaction } from '../../core/db/transaction.js';
+import { createMfaPolicy } from '../../core/auth/stage.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
+import { PERMISSION_CATALOG } from '../permission-catalog.js';
 import {
   assertKeepsASuperadmin, assertLocal, assertNotSelf, initialExpiry, renewedExpiry,
 } from './users.rules.js';
@@ -16,6 +18,7 @@ import {
 // revokes the sessions it affects and is audited in the same transaction.
 
 const MAX_OFFSET = 10000;
+const mfaPolicy = createMfaPolicy(PERMISSION_CATALOG);
 
 // 20 random characters (120 bits), shown once to the administrator and
 // changed by the user on first login (A5).
@@ -87,6 +90,19 @@ export function createUsersService({ db, repository, audit, config }) {
 
     async get(auth, id) {
       return toUser(await inScope(db, auth, id));
+    },
+
+    // Effective permissions (phase 6): every permission, the roles that grant
+    // it, and whether the result makes MFA mandatory.
+    async effectivePermissions(auth, id) {
+      await inScope(db, auth, id);
+      const rows = await repository.effectivePermissions(db, id);
+      return {
+        mfaRequired: mfaPolicy.isRequired(rows.map((row) => row.code)),
+        permissions: rows.map((row) => ({
+          code: row.code, description: row.description, administrative: row.is_administrative, roles: row.roles,
+        })),
+      };
     },
 
     async reviewLocal(auth, { page, pageSize }) {

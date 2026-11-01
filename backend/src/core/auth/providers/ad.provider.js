@@ -1,4 +1,4 @@
-import { Client, InvalidCredentialsError } from 'ldapts';
+import { Client, InvalidCredentialsError, NoSuchObjectError } from 'ldapts';
 import { ServiceUnavailableError } from '../../errors/errors.js';
 import { escapeFilterValue, firstValue, guidToUuid, isAccountDisabled, isAccountExpired } from './ldap-utils.js';
 
@@ -96,6 +96,21 @@ export function createAdProvider(config, { clientFactory = defaultClientFactory(
     // periodic review in phase 5).
     async lookup(username) {
       return withServiceClient((client) => findEntry(client, username));
+    },
+
+    // Whether a group exists, before mapping it to a role (phase 6).
+    async groupExists(groupDn) {
+      return withServiceClient(async (client) => {
+        try {
+          const { searchEntries } = await client.search(groupDn, {
+            scope: 'base', filter: '(objectClass=group)', attributes: ['distinguishedName'], sizeLimit: 1,
+          });
+          return searchEntries.length === 1;
+        } catch (error) {
+          if (error instanceof NoSuchObjectError) return false;
+          throw error;
+        }
+      });
     },
 
     // Whether the account may use EnvioTec, and which of the mapped groups

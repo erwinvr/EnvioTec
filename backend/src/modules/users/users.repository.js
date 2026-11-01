@@ -179,6 +179,23 @@ export function createUsersRepository() {
       return rows[0].n;
     },
 
+    // Each effective permission with the roles that grant it.
+    async effectivePermissions(db, userId) {
+      const { rows } = await db.query(
+        `SELECT p.code, p.description, p.is_administrative,
+                array_agg(DISTINCT r.name::text ORDER BY r.name::text) AS roles
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+          WHERE ur.user_id = $1
+          GROUP BY p.code, p.description, p.is_administrative
+          ORDER BY p.code`,
+        [userId],
+      );
+      return rows;
+    },
+
     async getSettings(db, keys) {
       const { rows } = await db.query('SELECT key, value FROM system_settings WHERE key = ANY($1::text[])', [keys]);
       return Object.fromEntries(rows.map((row) => [row.key, row.value]));

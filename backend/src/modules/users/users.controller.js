@@ -13,6 +13,7 @@ export function createUsersController({ users, roles }) {
       return ok(items, { total, page, pageSize });
     },
     get: async (request) => ok(await users.get(request.auth, request.params.id)),
+    effectivePermissions: async (request) => ok(await users.effectivePermissions(request.auth, request.params.id)),
     reviewLocal: async (request) => {
       const { page, pageSize } = request.query;
       const { items, total } = await users.reviewLocal(request.auth, { page, pageSize });

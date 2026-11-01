@@ -311,3 +311,29 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - En el plan escribí que la cuenta de emergencia quedaba exenta de vigencia pero no de inactividad. Al implementarlo se vio que eso la desactivaría a los 45 días sin uso, justo lo contrario de su propósito: existe para el día en que nadie más puede entrar. Las cuentas exentas de vigencia también quedan exentas de la desactivación por inactividad; el MFA sigue siendo obligatorio y cada uso alerta a los administradores (Fase 4).
 - La revisión de AD no cambia el `status` de las cuentas: revoca sus sesiones y el login vuelve a consultar AD. Así, una cuenta rehabilitada en AD recupera el acceso sin intervención manual.
 - La cobertura de `npm run check` pasó a medir también `src/modules/**` (services incluidos), como pide A11.
+
+### Fase 6 — Roles y permisos (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A6 regla 1 | Crear un rol o cambiar sus permisos solo con permisos que el actor tiene, también para quitarlos; 403 `PRIVILEGE_ESCALATION` auditado aunque la transacción se revierta | `unit/roles-rules.test.js`, `integration/roles-admin.test.js` |
+| A6 (rol propio) | Nadie cambia los permisos de un rol que tiene (aprobado en el plan de la fase) | `roles-rules.test.js`, `roles-admin.test.js` |
+| A6 reglas 4 y 5 | El rol de sistema no se renombra, no cambia permisos y no se borra (servicio y triggers); un rol asignado o mapeado desde AD no se borra | `roles-rules.test.js`, `roles-admin.test.js` |
+| A6 regla 6 / A5 | Todo cambio de permisos de un rol revoca las sesiones de sus usuarios y se audita con lo agregado, lo quitado y el estado anterior | `roles-admin.test.js` |
+| ADR-007 | Un rol usado por cuentas de AD o mapeado desde un grupo no recibe permisos administrativos (servicio y trigger); los grupos de AD solo se mapean a roles de negocio; DN validado y, con AD habilitado, el grupo debe existir | `roles-rules.test.js`, `roles-admin.test.js` |
+| A6 (revisión de accesos) | Permisos efectivos por usuario con los roles que otorgan cada uno e indicador de MFA obligatorio, con alcance por área | `roles-admin.test.js`, `authorization-matrix.test.js` |
+| Parte B (parámetros) | `settings.manage` + re-autenticación; rango validado en el backend y en la base; listas de emails y dominios validadas y normalizadas; la vigencia por defecto y la renovación no superan la máxima; auditoría con valor anterior y nuevo | `roles-rules.test.js`, `roles-admin.test.js` |
+| Criterio de salida | Reglas contra escalamiento (`users.rules.js`, `roles.rules.js`) con 100 % de líneas, ramas y funciones | `npm run check` (cobertura) |
+
+**Pendiente para fases siguientes:**
+
+- Pantallas de roles, permisos efectivos, equivalencias de AD y parámetros (Fase 7).
+- Validar las equivalencias contra el AD real (R15).
+
+**Hallazgos de la fase:**
+
+- `pg` no reconoce los arreglos de `citext` y los devuelve como texto; el schema de respuesta lo rechazó con un 500 en los tests. Los nombres de rol se convierten a `text` al agregarlos. Las demás consultas usan `json_agg` o columnas `text`.
+- Revocar las sesiones de todos los usuarios de un rol al cambiar sus permisos obliga a todos ellos a iniciar sesión de nuevo; se aceptó en el plan por consistencia con A5.
+

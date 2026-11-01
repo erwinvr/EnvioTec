@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 5 (usuarios): API de autenticación, auditoría, usuarios locales y de AD con vigencia, roles y áreas, y trabajos del worker. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 6 (roles y permisos): API del núcleo completa (autenticación, auditoría, usuarios, roles, permisos efectivos, áreas, equivalencias de AD y parámetros). Siguiente: frontend del núcleo (Fase 7). Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -131,7 +131,7 @@ No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proye
 ## Tests
 
 - `backend/tests/unit`: configuración, logger, errores, health, contraseñas, TOTP (vectores de los RFC 4226 y 6238), cifrado, CSRF, etapas de sesión, bloqueo, rate limiter, proveedor de AD y correo del sistema.
-- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
+- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas, roles, equivalencias de AD, parámetros y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
 - `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
 

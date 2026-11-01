@@ -44,6 +44,25 @@ const MATRIX_CASES = {
   'DELETE /api/v1/users/:id/sessions': { url: (f) => `/api/v1/users/${f.targetId}/sessions`, success: 200 },
   'POST /api/v1/areas': { url: () => '/api/v1/areas', success: 201, payload: () => ({ name: `${PREFIX}-nueva` }) },
   'PATCH /api/v1/areas/:id': { url: (f) => `/api/v1/areas/${f.areaId}`, success: 200, payload: () => ({ adDepartment: `${PREFIX}-dep` }) },
+  'GET /api/v1/users/:id/permissions': { url: (f) => `/api/v1/users/${f.targetId}/permissions`, success: 200 },
+  'GET /api/v1/roles': { url: () => '/api/v1/roles', success: 200 },
+  'GET /api/v1/roles/:id': { url: (f) => `/api/v1/roles/${f.extraRoleId}`, success: 200 },
+  'POST /api/v1/roles': { url: () => '/api/v1/roles', success: 201, payload: () => ({ name: `${PREFIX}-creado` }) },
+  'PATCH /api/v1/roles/:id': { url: (f) => `/api/v1/roles/${f.extraRoleId}`, success: 200, payload: () => ({ description: 'Matriz' }) },
+  'PUT /api/v1/roles/:id/permissions': {
+    url: (f) => `/api/v1/roles/${f.extraRoleId}/permissions`, success: 200, payload: () => ({ permissions: [] }),
+  },
+  'DELETE /api/v1/roles/:id': { url: (f) => `/api/v1/roles/${f.deletableRoleId}`, success: 200 },
+  'GET /api/v1/directory/mappings': { url: () => '/api/v1/directory/mappings', success: 200 },
+  'POST /api/v1/directory/mappings': {
+    url: () => '/api/v1/directory/mappings', success: 201,
+    payload: (f) => ({ groupDn: `CN=${PREFIX}-matriz,DC=empresa,DC=test`, roleId: f.extraRoleId }),
+  },
+  'DELETE /api/v1/directory/mappings/:id': { url: (f) => `/api/v1/directory/mappings/${f.mappingId}`, success: 200 },
+  'GET /api/v1/settings': { url: () => '/api/v1/settings', success: 200 },
+  'PATCH /api/v1/settings/:key': {
+    url: () => '/api/v1/settings/test_send.daily_max_per_user', success: 200, payload: () => ({ value: 5 }),
+  },
   'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
   'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
@@ -118,6 +137,13 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     );
 
     fixtures.targetId = await createUser('target', { mfa: false });
+    // Roles the matrix user does not hold (nobody edits a role they hold).
+    const extra = await owner.query('INSERT INTO roles (name) VALUES ($1), ($2), ($3) RETURNING id',
+      [`${PREFIX}-extra`, `${PREFIX}-borrable`, `${PREFIX}-mapeado`]);
+    [fixtures.extraRoleId, fixtures.deletableRoleId, fixtures.mappedRoleId] = extra.rows.map((row) => row.id);
+    const mapping = await owner.query('INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2) RETURNING id',
+      [`CN=${PREFIX}-fijo,DC=empresa,DC=test`, fixtures.mappedRoleId]);
+    fixtures.mappingId = mapping.rows[0].id;
     const allowed = await createUser('allowed', { roleId: fixtures.roleId });
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));
@@ -148,6 +174,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
           WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE username LIKE $1)`,
         [`${PREFIX}.%`],
       );
+      await owner.query('DELETE FROM ad_group_role_mappings WHERE group_dn LIKE $1', [`CN=${PREFIX}-%`]);
       await owner.query('DELETE FROM user_roles WHERE role_id = $1', [fixtures.roleId]);
       await owner.query('DELETE FROM role_permissions WHERE role_id = $1', [fixtures.roleId]);
       await owner.query("UPDATE users SET deleted_at = now(), status = 'disabled' WHERE username LIKE $1", [`${PREFIX}.%`]);
@@ -217,7 +244,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   it('toda ruta con sesión (permiso o authenticated) responde 401 sin sesión', async () => {
     const routes = app.routeInventory.filter((route) => !route.public && route.method !== 'HEAD');
     for (const route of routes) {
-      const url = route.url.replace(':id', route.url.includes('sessions') ? 'a'.repeat(64) : fixtures.targetId);
+      const url = route.url.replace(':id', route.url.includes('sessions') ? 'a'.repeat(64) : fixtures.targetId)
+        .replace(':key', 'test_send.daily_max_per_user');
       const res = await request(route.method, url);
       assert.equal(res.statusCode, 401, `${route.method} ${route.url}`);
     }

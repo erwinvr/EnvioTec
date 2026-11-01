@@ -70,6 +70,7 @@ describe('reglas contra escalamiento de privilegios (A6)', () => {
     assert.doesNotThrow(() => assertNotSelf('a', 'b', 'x'));
     assert.throws(() => assertLocal({ auth_source: 'ad' }), (error) => error.statusCode === 409);
     assert.doesNotThrow(() => assertLocal({ auth_source: 'local' }));
+    assert.throws(() => assertLocal({ auth_source: 'ad' }, 'mensaje propio'), /mensaje propio/);
   });
 });
 
@@ -88,6 +89,7 @@ describe('vigencia de cuentas locales', () => {
   it('renovación: extiende desde el vencimiento actual, hasta 90 días y sin pasar el máximo desde hoy', () => {
     assert.equal(renewedExpiry(new Date(now + 30 * day), 90, settings, now).getTime(), now + 120 * day);
     assert.equal(renewedExpiry(new Date(now - 10 * day), 30, settings, now).getTime(), now + 30 * day, 'vencida: desde hoy');
+    assert.equal(renewedExpiry(null, 30, settings, now).getTime(), now + 30 * day, 'sin vencimiento previo: desde hoy');
     assert.throws(() => renewedExpiry(new Date(now + 30 * day), 91, settings, now), code('exceeds_renewal_max'));
     assert.throws(() => renewedExpiry(new Date(now + 100 * day), 90, settings, now), code('exceeds_max_validity'));
   });

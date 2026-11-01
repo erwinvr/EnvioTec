@@ -4,7 +4,7 @@ import { createUsersController } from './users.controller.js';
 import { createUsersRepository } from './users.repository.js';
 import { createUserRolesService } from './users.roles.service.js';
 import {
-  createBody, createResponse, idParams, listQuery, listResponse, passwordResponse, renewBody, reviewQuery,
+  createBody, createResponse, effectivePermissionsResponse, idParams, listQuery, listResponse, passwordResponse, renewBody, reviewQuery,
   reviewResponse, revokeResponse, rolesBody, updateBody, userResponse,
 } from './users.schemas.js';
 import { createUsersService } from './users.service.js';
@@ -24,6 +24,7 @@ export async function usersRoutes(app, { db, audit, config, services }) {
   route('GET', '/api/v1/users', 'users.view', { querystring: listQuery, response: { 200: listResponse } }, c.list);
   route('GET', '/api/v1/users/review/local', 'users.view', { querystring: reviewQuery, response: { 200: reviewResponse } }, c.reviewLocal);
   route('GET', '/api/v1/users/:id', 'users.view', byId({ response: { 200: userResponse } }), c.get);
+  route('GET', '/api/v1/users/:id/permissions', 'users.view', byId({ response: { 200: effectivePermissionsResponse } }), c.effectivePermissions);
   route('POST', '/api/v1/users', 'users.create_local', { body: createBody, response: { 201: createResponse } }, c.create);
   route('PATCH', '/api/v1/users/:id', 'users.update', byId({ body: updateBody, response: { 200: userResponse } }), c.update);
   route('POST', '/api/v1/users/:id/disable', 'users.disable', byId({ response: { 200: userResponse } }), c.disable);
