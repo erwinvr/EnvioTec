@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 6 (roles y permisos): API del núcleo completa (autenticación, auditoría, usuarios, roles, permisos efectivos, áreas, equivalencias de AD y parámetros). Siguiente: frontend del núcleo (Fase 7). Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 7 (frontend del núcleo): API y pantallas del núcleo completas (login con MFA, usuarios, roles, áreas, directorio, parámetros, auditoría). Siguiente: módulos de negocio (Fase 8). Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -115,16 +115,17 @@ npm run check
 Ejecuta, en orden y deteniéndose en el primer fallo:
 
 1. `npm ci`
-2. Lint (ESLint con `eslint-plugin-security` en el backend y prohibición de sinks HTML en el frontend)
+2. Lint (ESLint con `eslint-plugin-security` en el backend y prohibición de sinks HTML en el frontend) y tests del frontend
 3. Secretos efímeros para el entorno de verificación
 4. Construcción de imágenes y arranque del stack completo (proyecto Compose aparte, sin puertos publicados)
 5. Migraciones: aplicar, revertir todo y volver a aplicar sobre la base vacía; seed de sistema
 6. Tests de base de datos (`database/tests`): privilegios de `app_runtime`, triggers, restricciones, seeds y bootstrap
 7. Tests unitarios, de integración y de seguridad del backend dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core` y `backend/src/modules`
-8. Verificación de la cadena de auditoría, sobre todo lo que auditaron los tests
-9. `npm audit --audit-level=high` (raíz, backend y database)
-10. gitleaks sobre el historial de Git
-11. Trivy sobre las imágenes `backend`, `nginx`, `egress-proxy` y `tools` (altas y críticas con corrección disponible)
+8. Navegador real (Playwright, ADR-021): login con MFA, cada pantalla del núcleo, altas, cambio de idioma y cierre de sesión; falla ante cualquier violación de CSP o error en consola
+9. Verificación de la cadena de auditoría, sobre todo lo que auditaron los tests y el navegador
+10. `npm audit --audit-level=high` (raíz, backend y database)
+11. gitleaks sobre el historial de Git
+12. Trivy sobre las imágenes `backend`, `nginx`, `egress-proxy` y `tools` (altas y críticas con corrección disponible)
 
 No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proyecto, otras subredes y otros secretos, y los borra al terminar. Necesita salida a internet (paquetes npm, base de Trivy y el test que verifica el túnel hacia Mandrill).
 
@@ -134,6 +135,9 @@ No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proye
 - `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas, roles, equivalencias de AD, parámetros y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
 - `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
+
+- `frontend/tests`: diccionarios (mismas claves en español e inglés, ninguna clave faltante), router, cliente API, manejo de errores, validación de formularios y URLs seguras (`npm run test:frontend`, sin navegador).
+- `e2e/run.mjs`: recorrido en Chromium real dentro de `npm run check`.
 
 Los tests de integración y los del stack se ejecutan solo dentro de `npm run check`; fuera de él aparecen como omitidos.
 
@@ -145,6 +149,11 @@ backend/            API y worker (Fastify, Node.js 26)
   src/modules/      un módulo por dominio (health en esta fase)
   tests/            unit, integration, security
 frontend/           HTML + JS Vanilla (ES Modules), servido por nginx
+  src/core/         dom seguro, cliente API, auth, router, i18n, errores
+  src/components/   tabla, formulario, modal, diálogos, toast, paginación, navegación
+  src/pages/        autenticación, inicio, mi cuenta y administración
+  src/i18n/         diccionarios es y en
+e2e/                verificación en navegador (Playwright)
 proxy/              configuración de nginx y su Dockerfile
 infra/              egress-proxy (Squid) y arranque de Redis con ACL
 database/           migraciones, seeds (system/dev), scripts (migrate, seed, bootstrap) y sus tests

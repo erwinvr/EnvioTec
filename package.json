@@ -10,12 +10,14 @@
   "scripts": {
     "lint": "eslint --max-warnings=0 .",
     "check": "bash scripts/check.sh",
-    "secrets:dev": "bash scripts/generate-dev-secrets.sh"
+    "secrets:dev": "bash scripts/generate-dev-secrets.sh",
+    "test:frontend": "node --test frontend/tests/*.test.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "eslint": "10.14.0",
     "eslint-plugin-no-unsanitized": "4.1.5",
-    "eslint-plugin-security": "4.2.1"
+    "eslint-plugin-security": "4.2.1",
+    "playwright-core": "1.64.1"
   }
 }

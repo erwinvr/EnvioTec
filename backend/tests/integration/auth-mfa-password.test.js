@@ -47,6 +47,9 @@ describe('MFA, contraseñas y recuperación', { skip: !enabled && 'requiere RUN_
     assert.equal(start.statusCode, 200);
     const { secret, otpauthUri } = start.json().data;
     assert.match(otpauthUri, /^otpauth:\/\/totp\/EnvioTec:/);
+    const svg = Buffer.from(start.json().data.qrDataUri.replace('data:image/svg+xml;base64,', ''), 'base64').toString();
+    assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg"/);
+    assert.ok(!/<script|on\w+=/i.test(svg), 'el SVG no lleva scripts ni handlers');
     const wrong = await h.request('POST', '/api/v1/auth/mfa/enroll/confirm', { token, payload: { code: '000000' } });
     assert.equal(wrong.statusCode, 422);
     const ok = await h.request('POST', '/api/v1/auth/mfa/enroll/confirm', { token, payload: { code: totpFor(secret) } });

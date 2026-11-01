@@ -337,3 +337,27 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - `pg` no reconoce los arreglos de `citext` y los devuelve como texto; el schema de respuesta lo rechazó con un 500 en los tests. Los nombres de rol se convierten a `text` al agregarlos. Las demás consultas usan `json_agg` o columnas `text`.
 - Revocar las sesiones de todos los usuarios de un rol al cambiar sus permisos obliga a todos ellos a iniciar sesión de nuevo; se aceptó en el plan por consistencia con A5.
 
+### Fase 7 — Frontend del núcleo (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A9 / XSS | Todo nodo se crea con `core/dom.js` (`textContent`, atributos por allowlist, sin `on*`, `style` ni `srcdoc`, URLs solo relativas, `https:`, `mailto:` y los `data:`/`blob:` que crea la app); ningún sink HTML; lint con `no-unsanitized` y propiedades prohibidas | `frontend/tests/core.test.js`, `npm run lint` |
+| A8 / A9 (CSP y Trusted Types) | Sin scripts, estilos ni handlers inline; ES Modules con import literal; prueba en Chromium real que falla ante cualquier violación de CSP o de Trusted Types y ante errores en consola | `e2e/run.mjs` (paso 8 de `npm run check`) |
+| A9 (frontend no es control) | `auth.hasPermission` y el router solo muestran u ocultan; cada acción la decide el backend | `frontend/tests/core.test.js` (router), matriz de autorización del backend |
+| A8 (CSRF) | Cliente único: cookies same-origin y `X-CSRF-Token` en métodos que modifican, nunca en GET | `frontend/tests/core.test.js` |
+| A9 (errores) | Manejo central: 401 al login, etapa pendiente a su pantalla, re-autenticación con diálogo y un reintento, 409/422 por campo, 429 con espera, 5xx genérico con `requestId`, nunca detalles técnicos | `frontend/tests/core.test.js` |
+| A5 (tokens) | Ningún token en `localStorage`, `sessionStorage` ni en la URL: el token de recuperación se lee del fragmento y se borra del historial con `history.replaceState`; contraseñas temporales, códigos de enrolamiento y de recuperación se muestran una sola vez con aviso | revisión de código, `e2e/run.mjs` |
+| Parte B (i18n) | Español e inglés con las mismas claves; cada clave usada en el código existe; idioma en cookie no sensible (ADR-021) | `frontend/tests/i18n.test.js` |
+| ADR-006 (QR) | QR del TOTP como SVG `data:` en un `<img>`, sin marcado en el DOM ni scripts en el SVG | `integration/auth-mfa-password.test.js`, `e2e/run.mjs` |
+
+**Pendiente para fases siguientes:**
+
+- Pantallas de los módulos de negocio (Fase 8), con los mismos componentes.
+- Revisión de accesibilidad con un lector de pantalla y prueba en los navegadores corporativos (Fase 9).
+
+**Hallazgos de la fase:**
+
+- El origen del entorno de verificación pasó a ser `https://nginx:8443` para que el navegador de la prueba cumpla el control de `Origin`; los tests del backend siguen usando su propio origen.
+

@@ -24,3 +24,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [018](018-etapas-de-sesion-y-rutas-autenticadas.md) | Etapas de la sesión, rutas autenticadas y auditoría desde la Fase 3 | Aceptado |
 | [019](019-pruebas-de-ad-con-directorio-simulado.md) | Pruebas de AD con directorio simulado | Aceptado |
 | [020](020-programador-de-trabajos-del-worker.md) | Programador de trabajos periódicos del worker | Aceptado |
+| [021](021-frontend-del-nucleo.md) | Frontend del núcleo: QR, idioma y verificación en navegador | Aceptado |

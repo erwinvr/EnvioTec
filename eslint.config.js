@@ -12,7 +12,7 @@ const nodeGlobals = { ...sharedGlobals, process: 'readonly', Buffer: 'readonly' 
 const browserGlobals = {
   ...sharedGlobals, window: 'readonly', document: 'readonly', navigator: 'readonly',
   location: 'readonly', history: 'readonly', HTMLElement: 'readonly', Event: 'readonly',
-  CustomEvent: 'readonly', FormData: 'readonly', Intl: 'readonly',
+  CustomEvent: 'readonly', FormData: 'readonly', Intl: 'readonly', Node: 'readonly', HashChangeEvent: 'readonly', Response: 'readonly',
 };
 
 export default [
@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ['backend/**/*.js', 'database/**/*.js', 'spikes/**/*.mjs', 'eslint.config.js'],
+    files: ['backend/**/*.js', 'database/**/*.js', 'spikes/**/*.mjs', 'e2e/**/*.mjs', 'frontend/tests/**/*.js', 'eslint.config.js'],
     languageOptions: { globals: nodeGlobals },
     ...security.configs.recommended,
     rules: {

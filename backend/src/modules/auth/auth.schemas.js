@@ -66,8 +66,8 @@ export const emptyResponse = successSchema(empty);
 export const enrollStartResponse = successSchema({
   type: 'object',
   additionalProperties: false,
-  required: ['secret', 'otpauthUri'],
-  properties: { secret: { type: 'string' }, otpauthUri: { type: 'string' } },
+  required: ['secret', 'otpauthUri', 'qrDataUri'],
+  properties: { secret: { type: 'string' }, otpauthUri: { type: 'string' }, qrDataUri: { type: 'string' } },
 });
 
 export const enrollConfirmResponse = successSchema({

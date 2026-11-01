@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>EnvioTec</title>
   <link rel="stylesheet" href="/src/styles/main.css">
   <script type="module" src="/src/app.js"></script>
 </head>
 <body>
-  <main class="placeholder">
-    <h1>EnvioTec</h1>
-    <p id="service-status" class="status" data-state="pending">Comprobando el servicio…</p>
-  </main>
+  <a class="skip-link" href="#app">Saltar al contenido / Skip to content</a>
+  <header id="nav" class="topbar"></header>
+  <main id="app" tabindex="-1" data-state="loading"></main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <noscript>EnvioTec necesita JavaScript. / EnvioTec requires JavaScript.</noscript>
 </body>
 </html>

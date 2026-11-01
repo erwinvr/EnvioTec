@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { renderSVG } from 'uqr';
 import { createSessionRepository } from '../../core/auth/session.repository.js';
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from '../../core/auth/totp.js';
 import { assertRecentReauth } from '../../core/authorization/authorization.js';
@@ -121,7 +122,11 @@ export function createMfaService({ db, repository, mfaRepository, audit, limiter
         secret: encryptSecret(key, secret, `mfa-pending:${auth.user.id}`).toString('base64'), enrollmentCodeId,
       });
       await limiter.setValue(`mfa:pending:${auth.sessionHash.toString('hex')}`, pending, PENDING_TTL_SECONDS);
-      return { secret: base32Encode(secret), otpauthUri: otpauthUri(secret, { issuer: ISSUER, account: auth.user.username }) };
+      const uri = otpauthUri(secret, { issuer: ISSUER, account: auth.user.username });
+      // QR as an SVG image (uqr, phase 7): the frontend shows it through
+      // img-src data:, without inserting markup into the page.
+      const qrDataUri = `data:image/svg+xml;base64,${Buffer.from(renderSVG(uri, { ecc: 'M' })).toString('base64')}`;
+      return { secret: base32Encode(secret), otpauthUri: uri, qrDataUri };
     },
 
     async enrollConfirm(auth, { code }, context) {

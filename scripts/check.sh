@@ -17,6 +17,9 @@ export COMPOSE_PROJECT_NAME=enviotec-check
 export SECRETS_DIR=./.check-secrets
 export EDGE_SUBNET=172.31.110.0/24
 export NGINX_IP=172.31.110.10
+# The browser check opens the app at https://nginx:8443, so that is the
+# origin the backend accepts in this environment (CSRF Origin check).
+export APP_ORIGIN=https://nginx:8443
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.check.yml)
 
 cleanup() {
@@ -27,41 +30,53 @@ trap cleanup EXIT
 
 step() { printf '\n==> %s\n' "$1"; }
 
-step "1/11 npm ci"
+step "1/12 npm ci"
 npm ci --no-audit --no-fund
 
-step "2/11 Lint"
+step "2/12 Lint y tests del frontend"
 npm run lint
+npm run test:frontend
 
-step "3/11 Secretos efímeros para el entorno de verificación"
+step "3/12 Secretos efímeros para el entorno de verificación"
 bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force
 
-step "4/11 Construcción de imágenes y arranque del stack"
+step "4/12 Construcción de imágenes y arranque del stack"
 "${COMPOSE[@]}" --profile check build
 "${COMPOSE[@]}" up -d --wait --wait-timeout 180 nginx backend worker postgres redis egress-proxy
 
-step "5/11 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
+step "5/12 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/migrate.js verify
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/seed.js system
 
-step "6/11 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
+step "6/12 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
 "${COMPOSE[@]}" --profile check run --rm tools node --test --test-concurrency=1 "tests/**/*.test.js"
 
-step "7/11 Tests unitarios, de integración y de seguridad del backend (con cobertura)"
+step "7/12 Tests unitarios, de integración y de seguridad del backend (con cobertura)"
 "${COMPOSE[@]}" --profile check run --rm tests
 
-step "8/11 Verificación de la cadena de auditoría (después de todo lo que auditaron los tests)"
+step "8/12 Navegador: login con MFA y pantallas del núcleo sin violaciones de CSP"
+printf 'E2e-%s' "$(openssl rand -hex 16)" > "$SECRETS_DIR/e2e_admin_password"
+chmod 644 "$SECRETS_DIR/e2e_admin_password"
+"${COMPOSE[@]}" --profile check run --rm -T \
+  -e BOOTSTRAP_USERNAME=e2e.admin -e BOOTSTRAP_EMAIL=e2e.admin@empresa.test \
+  -e BOOTSTRAP_DISPLAY_NAME="Administrador E2E" -e BOOTSTRAP_AREA="Administración E2E" \
+  -e BOOTSTRAP_PASSWORD_FILE=/run/e2e/password \
+  -v "$PWD/$SECRETS_DIR/e2e_admin_password:/run/e2e/password:ro" \
+  tools node scripts/bootstrap-admin.js
+"${COMPOSE[@]}" --profile check run --rm e2e
+
+step "9/12 Verificación de la cadena de auditoría (después de todo lo que auditaron los tests y el navegador)"
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/audit-verify.js
 
-step "9/11 Auditoría de dependencias"
+step "10/12 Auditoría de dependencias"
 npm audit --audit-level=high
 (cd backend && npm audit --audit-level=high)
 (cd database && npm audit --audit-level=high)
 
-step "10/11 Detección de secretos en el historial de Git"
+step "11/12 Detección de secretos en el historial de Git"
 docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact --no-banner
 
-step "11/11 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
+step "12/12 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
 for image in "${SCANNED_IMAGES[@]}"; do
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \

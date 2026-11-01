@@ -47,3 +47,24 @@ services:
       NODE_ENV: test
       DATABASE_URL_FILE: /run/secrets/database_url
     secrets: [migration_database_url, database_url]
+
+  # Browser check of the frontend (phase 7): official Playwright image, used
+  # only here, like Trivy. It reaches nginx on the edge network.
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+    profiles: [check]
+    working_dir: /repo
+    shm_size: 512m
+    environment:
+      BASE_URL: https://nginx:8443
+      E2E_USERNAME: e2e.admin
+      E2E_PASSWORD_FILE: /run/e2e/password
+    volumes:
+      - .:/repo:ro
+      - ${SECRETS_DIR:-./secrets}/e2e_admin_password:/run/e2e/password:ro
+    networks: [edge]
+    command: ["node", "e2e/run.mjs"]
+    depends_on:
+      nginx:
+        condition: service_healthy
+

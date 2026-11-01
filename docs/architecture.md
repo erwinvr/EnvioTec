@@ -177,12 +177,12 @@ Versiones exactas y `package-lock.json` versionado. La licencia y el estado de m
 | `yauzl` | Inspección del ZIP antes de descomprimir | `zlib` no lee el directorio central | MIT |
 | `sanitize-html` | Sanitización de HTML en el servidor | DOMPurify requiere jsdom | MIT |
 | `csv-parse` | Importación CSV en streaming | Comillas y saltos de línea en campos | MIT |
-| `qrcode` | QR para enrolar el TOTP | No compensa generarlo a mano | MIT |
+| `uqr` | QR (SVG) para enrolar el TOTP, en el backend | No compensa codificar QR a mano; reemplaza a `qrcode`, que arrastra `yargs` (ADR-021) | MIT |
 | `argon2` | Argon2id, solo si `crypto.argon2` de Node no es estable en la LTS elegida | Se verifica en la Fase 1 | MIT |
 
 Implementado con funcionalidad nativa: TOTP (RFC 6238 con `crypto`, probado con los vectores del RFC), cifrado AES-256-GCM, UUIDv7 (PostgreSQL 18), cliente de Mandrill (`fetch`), i18n (diccionarios JSON), cobertura (`node --test`).
 
-Solo de desarrollo: `eslint`, `eslint-plugin-security` (Apache-2.0), `eslint-plugin-no-unsanitized` (MPL-2.0), `pino-pretty`.
+Solo de desarrollo: `eslint`, `eslint-plugin-security` (Apache-2.0), `eslint-plugin-no-unsanitized` (MPL-2.0), `pino-pretty`, `playwright-core` (Apache-2.0, verificación en navegador, ADR-021).
 
 Herramientas fuera de npm (contenedores): qpdf (Apache-2.0), ClamAV (GPL-2.0, servicio separado), nginx, gitleaks (MIT), Trivy (Apache-2.0), proxy de egreso (se elige en la Fase 1 y se justifica en ADR-009).
 
