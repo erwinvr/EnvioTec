@@ -23,7 +23,16 @@ const PREFIX = `matrix_${randomBytes(4).toString('hex')}`;
 const MATRIX_CASES = {
   'GET /api/v1/permissions': { url: () => '/api/v1/permissions', success: 200 },
   'POST /api/v1/users/:id/mfa/reset': { url: (f) => `/api/v1/users/${f.targetId}/mfa/reset`, success: 200 },
+  'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
+  'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
+
+function exportRange() {
+  const day = 24 * 60 * 60 * 1000;
+  return new URLSearchParams({
+    from: new Date(Date.now() - day).toISOString(), to: new Date(Date.now() + day).toISOString(),
+  }).toString();
+}
 
 describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/check.sh)' }, () => {
   let app;

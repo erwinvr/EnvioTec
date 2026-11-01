@@ -11,6 +11,7 @@ import { createMailer } from './core/mail/mailer.js';
 import { registerOriginCheck } from './core/security/csrf.js';
 import { createRateLimiter } from './core/security/rate-limiter.js';
 import { registerResponseHeaders } from './core/security/response-headers.js';
+import { auditLogsRoutes } from './modules/audit-logs/audit-logs.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { createAuthServices } from './modules/auth/auth.services.js';
 import { healthRoutes } from './modules/health/health.routes.js';
@@ -76,6 +77,7 @@ export async function buildApp({
   await app.register(authRoutes, { services });
   await app.register(usersRoutes, { services });
   await app.register(permissionsRoutes, { db });
+  await app.register(auditLogsRoutes, { db, audit });
   for (const plugin of extraPlugins) await app.register(plugin);
 
   await app.ready();

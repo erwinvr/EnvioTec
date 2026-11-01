@@ -20,7 +20,7 @@ export function createAuthServices({ db, config, audit, limiter, ad, mailer, mfa
   const shared = { db, repository, credentials, audit, limiter, local, ad, issuer, config, logger };
   return {
     issuer,
-    login: createLoginService(shared),
+    login: createLoginService({ ...shared, mailer }),
     mfa,
     password: createPasswordService({ ...shared, mailer }),
     account: createAccountService({ ...shared, mfa }),

@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 3 (autenticación): API de login local y de AD, MFA, CSRF, sesiones y recuperación de contraseña. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 4 (auditoría): API de autenticación completa, auditoría encadenada con verificación, consulta y exportación. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -27,7 +27,7 @@ worker ──▶ PostgreSQL, Redis, egress-proxy
 
 - **nginx:** TLS, frontend en `/`, `/api/*` y `/health/*` al backend, headers de seguridad (ADR-001).
 - **backend:** API sin estado; varias réplicas posibles.
-- **worker:** procesos en segundo plano (colas a partir de la Fase 3).
+- **worker:** procesos en segundo plano: hoy mantiene las particiones mensuales; las colas llegan con los módulos que las necesitan.
 - **egress-proxy:** única salida a internet, con allowlist de dominios (ADR-009, ADR-015).
 - Redes Docker `edge`, `data` y `egress` internas (sin internet); PostgreSQL y Redis sin puertos publicados en producción.
 - Todos los contenedores corren sin root, con sistema de archivos de solo lectura, `cap_drop: ALL`, `no-new-privileges`, healthcheck y límites de CPU y memoria.
@@ -56,6 +56,8 @@ docker compose run --rm tools node scripts/seed.js dev          # áreas de ejem
 docker compose run --rm -it tools node scripts/bootstrap-admin.js       # superadmin inicial (pide los datos)
 docker compose run --rm -it tools node scripts/bootstrap-admin.js --emergency   # cuenta de emergencia
 ```
+
+Verificación de la cadena de auditoría (también corre en `npm run check`): `docker compose run --rm tools node scripts/audit-verify.js [--from 2026-10-01]`. Termina con código 2 si detecta un registro alterado, eliminado o insertado fuera de la cadena.
 
 El bootstrap no tiene credenciales por defecto: pide usuario, email, nombre, área y contraseña (sin mostrarla), y la valida con la política de contraseñas. Solo crea el superadmin si todavía no existe uno, y queda auditado. En el primer login el superadmin debe configurar el MFA (`POST /api/v1/auth/mfa/enroll/start` y `/confirm`). Otros comandos de migración: `node scripts/migrate.js down [n|all]` y `node scripts/migrate.js verify`.
 
@@ -119,9 +121,10 @@ Ejecuta, en orden y deteniéndose en el primer fallo:
 5. Migraciones: aplicar, revertir todo y volver a aplicar sobre la base vacía; seed de sistema
 6. Tests de base de datos (`database/tests`): privilegios de `app_runtime`, triggers, restricciones, seeds y bootstrap
 7. Tests unitarios, de integración y de seguridad del backend dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core`
-8. `npm audit --audit-level=high` (raíz, backend y database)
-9. gitleaks sobre el historial de Git
-10. Trivy sobre las imágenes `backend`, `nginx`, `egress-proxy` y `tools` (altas y críticas con corrección disponible)
+8. Verificación de la cadena de auditoría, sobre todo lo que auditaron los tests
+9. `npm audit --audit-level=high` (raíz, backend y database)
+10. gitleaks sobre el historial de Git
+11. Trivy sobre las imágenes `backend`, `nginx`, `egress-proxy` y `tools` (altas y críticas con corrección disponible)
 
 No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proyecto, otras subredes y otros secretos, y los borra al terminar. Necesita salida a internet (paquetes npm, base de Trivy y el test que verifica el túnel hacia Mandrill).
 

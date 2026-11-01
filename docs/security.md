@@ -150,7 +150,7 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 | R9 | Bloqueo de cuentas de AD desde EnvioTec | Corte a los 2 intentos, 15 minutos | Resuelto |
 | R10 | Enrolamiento de MFA de cuentas de AD creadas por JIT (T7) | Código de enrolamiento de un solo uso emitido por un administrador y entregado por otro canal | Resuelto (ADR-006) |
 | R11 | Allowlist de egreso por dominio | Proxy de egreso en compose | Resuelto (ADR-009) |
-| R12 | Particiones mensuales con retención perpetua | El worker crea particiones con meses de anticipación; alerta si falta alguna | Abierto (Fase 2/8) |
+| R12 | Particiones mensuales con retención perpetua | El worker crea cada día 12 meses de particiones por delante y registra un error si quedan menos de 3 | Resuelto (Fase 4) |
 | R13 | Entregabilidad: SPF, DKIM y DMARC del subdominio | Coordinar con quien administra el DNS y la cuenta de Mailchimp | Abierto (fuera del código) |
 | R14 | Herramientas de `npm run check` (Trivy, gitleaks) | Se ejecutan como contenedores; requiere Docker donde corra Jenkins | Abierto (Fase 1) |
 | R15 | Compatibilidad del proveedor LDAPS con el AD real (TLS con la CA interna, atributos, grupos anidados): Samba AD no se puede provisionar en el host de desarrollo | Directorio simulado en los tests (ADR-019); validación con el AD de la organización cuando estén sus datos | Abierto (Fase 3) |
@@ -256,3 +256,28 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - La columna `sessions.must_change_password_only` prevista en el plan no hizo falta: la etapa se calcula desde `users.must_change_password` (ADR-018).
 - Los usuarios de los tests no se pueden borrar al terminar porque la auditoría los referencia con `ON DELETE RESTRICT`; los fixtures se marcan como borrados. Es el comportamiento esperado de la auditoría append-only.
 - Durante las pruebas, un fixture con un token de recuperación de más de 30 minutos fue rechazado por el CHECK de la base: el control funciona también fuera de la aplicación.
+
+### Fase 4 — Auditoría (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| T15 / A7 (detección) | `audit-verify.js` recorre la cadena en orden, recalcula cada hash y comprueba cada enlace: detecta registros alterados, eliminados o insertados fuera de `append_audit_log`; admite `--from`; corre como paso 8 de `npm run check` sobre todo lo que auditaron los tests | `database/tests/audit-verify.test.js`, `npm run check` |
+| A7 (consulta) | `GET /api/v1/audit-logs` con `audit.view`: filtros validados y parametrizados, orden fijo, página máxima de 100, desplazamiento máximo de 10.000; sin hashes ni IDs de sesión en la respuesta | `integration/audit-logs.test.js`, `unit/audit-logs.test.js`, `authorization-matrix.test.js` |
+| A7 (exportación) | `audit.export` + re-autenticación de los últimos 5 minutos; rango obligatorio de hasta 92 días; máximo 100.000 filas; CSV en streaming con BOM; la exportación queda auditada con filtros y cantidad de filas | `audit-logs.test.js`, `unit/audit-logs.test.js` |
+| Contactos / auditoría (CSV injection) | Toda celda entrecomillada; las que empiezan con `=`, `+`, `-`, `@`, tabulación o retorno se prefijan con apóstrofo (`core/http/csv.js`, reutilizable por las exportaciones de negocio) | `unit/audit-logs.test.js`, `audit-logs.test.js` |
+| Parte B (cuenta de emergencia) | Cada login registra `auth.emergency_login` destacado en la misma transacción y envía una alerta a `notifications.admin_emails` después de responder; si la lista está vacía queda una advertencia en el log | `audit-logs.test.js` |
+| R12 | El worker crea cada día las particiones de los próximos 12 meses, serializado con advisory lock entre réplicas | `audit-logs.test.js` |
+| A7 (seeds) | El seed de sistema registra `system.seed_sync` cuando cambia permisos, roles o parámetros; el bootstrap registra `user.bootstrap` | `database/tests/seed-and-bootstrap.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Retención: la aplicación nunca purga la auditoría (A7). El archivo en frío y el respaldo se definen en el runbook (Fase 9).
+- La alerta de emergencia depende del correo del sistema (R16). Mientras no haya API key, el evento destacado queda en la auditoría y la advertencia en el log.
+- Pantalla de auditoría (Fase 7).
+
+**Hallazgos de la fase:**
+
+- `audit.export` no es un permiso administrativo, así que un perfil de auditoría podía exportar sin MFA. Se decidió exigir re-autenticación para la exportación de auditoría (aprobado el 2026-10-31).
+- `seq` tiene huecos cuando una transacción auditada se revierte. La verificación se basa en el enlace de los hashes, no en la continuidad de `seq`, y el informe distingue `altered` de `broken_link`.

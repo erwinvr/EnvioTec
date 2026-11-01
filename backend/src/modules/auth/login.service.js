@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate } from 'node:timers';
 import { createSessionRepository } from '../../core/auth/session.repository.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { InvalidCredentialsError, RateLimitError } from '../../core/errors/errors.js';
@@ -15,7 +16,29 @@ const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const accountKey = (username) => createHash('sha256').update(username.toLowerCase()).digest('hex');
 
 export function createLoginService(deps) {
-  const { db, repository, credentials, audit, limiter, local, ad, issuer, config } = deps;
+  const { db, repository, credentials, audit, limiter, local, ad, issuer, config, mailer, logger } = deps;
+
+  // The emergency account bypasses AD; every use alerts the administrators
+  // (Parte B). Sent after the response, never blocking the login.
+  async function alertEmergencyUse(user, context) {
+    const recipients = await repository.getListSetting(db, 'notifications.admin_emails');
+    if (recipients.length === 0) logger.warn({ userId: user.id }, 'emergency account used and notifications.admin_emails is empty');
+    setImmediate(() => {
+      for (const to of recipients) {
+        mailer.send({
+          to,
+          tag: 'emergency-login',
+          subject: 'EnvioTec: se usó la cuenta de emergencia / emergency account used',
+          text: [
+            `La cuenta de emergencia "${user.username}" inició sesión en EnvioTec.`,
+            `Fecha (UTC): ${new Date().toISOString()}`,
+            `IP: ${context.ip}`,
+            'Si no corresponde a una contingencia autorizada, revise la auditoría y revoque sus sesiones.',
+          ].join('\n'),
+        }).catch((error) => logger.error({ errorMessage: error.message }, 'emergency alert mail failed'));
+      }
+    });
+  }
 
   async function throttle(name, limit) {
     const result = await limiter.hit(name, { limit, windowSeconds: WINDOW_SECONDS });
@@ -88,12 +111,21 @@ export function createLoginService(deps) {
       }
     }
 
-    return withTransaction(db, async (client) => {
+    const issued = await withTransaction(db, async (client) => {
       if (user.auth_source === 'ad') await syncAdAccount(client, user.id, check.adEntry, groups, mappings, context);
       const passwordHash = check.needsRehash ? await local.hash(password) : null;
       await repository.registerSuccess(client, user.id, { passwordHash });
-      return startSession(client, user.id, context, { authSource: user.auth_source, rehashed: passwordHash !== null });
+      const session = await startSession(client, user.id, context, { authSource: user.auth_source, rehashed: passwordHash !== null });
+      if (user.is_emergency) {
+        await audit.record(client, {
+          actor: { userId: user.id, sessionHash: session.hash }, action: 'auth.emergency_login', resourceType: 'user',
+          resourceId: user.id, result: 'success', context, metadata: { highlighted: true },
+        });
+      }
+      return session;
     });
+    if (user.is_emergency) await alertEmergencyUse(user, context);
+    return issued;
   }
 
   async function loginNewAdUser(username, password, context) {

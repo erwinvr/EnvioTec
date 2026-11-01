@@ -27,38 +27,41 @@ trap cleanup EXIT
 
 step() { printf '\n==> %s\n' "$1"; }
 
-step "1/10 npm ci"
+step "1/11 npm ci"
 npm ci --no-audit --no-fund
 
-step "2/10 Lint"
+step "2/11 Lint"
 npm run lint
 
-step "3/10 Secretos efímeros para el entorno de verificación"
+step "3/11 Secretos efímeros para el entorno de verificación"
 bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force
 
-step "4/10 Construcción de imágenes y arranque del stack"
+step "4/11 Construcción de imágenes y arranque del stack"
 "${COMPOSE[@]}" --profile check build
 "${COMPOSE[@]}" up -d --wait --wait-timeout 180 nginx backend worker postgres redis egress-proxy
 
-step "5/10 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
+step "5/11 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/migrate.js verify
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/seed.js system
 
-step "6/10 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
+step "6/11 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
 "${COMPOSE[@]}" --profile check run --rm tools node --test --test-concurrency=1 "tests/**/*.test.js"
 
-step "7/10 Tests unitarios, de integración y de seguridad del backend (con cobertura)"
+step "7/11 Tests unitarios, de integración y de seguridad del backend (con cobertura)"
 "${COMPOSE[@]}" --profile check run --rm tests
 
-step "8/10 Auditoría de dependencias"
+step "8/11 Verificación de la cadena de auditoría (después de todo lo que auditaron los tests)"
+"${COMPOSE[@]}" --profile check run --rm tools node scripts/audit-verify.js
+
+step "9/11 Auditoría de dependencias"
 npm audit --audit-level=high
 (cd backend && npm audit --audit-level=high)
 (cd database && npm audit --audit-level=high)
 
-step "9/10 Detección de secretos en el historial de Git"
+step "10/11 Detección de secretos en el historial de Git"
 docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact --no-banner
 
-step "10/10 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
+step "11/11 Escaneo de imágenes (vulnerabilidades altas y críticas con corrección disponible)"
 for image in "${SCANNED_IMAGES[@]}"; do
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \

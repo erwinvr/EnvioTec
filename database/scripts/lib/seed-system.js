@@ -10,6 +10,15 @@ export async function seedSystem(client) {
   const permissions = await syncPermissions(client);
   const roles = await syncRoles(client);
   const settings = await syncSettings(client);
+  // A7: catalog changes are administrative actions; a run that changes
+  // nothing leaves no event.
+  if (permissions + roles + settings > 0) {
+    await client.query(
+      `SELECT append_audit_log('system', NULL, NULL, 'system.seed_sync', 'catalog', NULL, 'success', NULL, NULL, NULL,
+                               jsonb_build_object('permissions', $1::int, 'roles', $2::int, 'settings', $3::int))`,
+      [permissions, roles, settings],
+    );
+  }
   return { permissions, roles, settings };
 }
 

@@ -160,6 +160,11 @@ export function createAuthRepository() {
       await db.query('UPDATE password_reset_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [userId]);
     },
 
+    async getListSetting(db, key) {
+      const { rows } = await db.query('SELECT value FROM system_settings WHERE key = $1', [key]);
+      return Array.isArray(rows[0]?.value) ? rows[0].value : [];
+    },
+
     async getIntegerSetting(db, key) {
       const { rows } = await db.query('SELECT value FROM system_settings WHERE key = $1', [key]);
       return rows.length > 0 ? Number(rows[0].value) : null;
