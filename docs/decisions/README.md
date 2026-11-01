@@ -28,3 +28,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [022](022-pipeline-de-archivos-implementado.md) | Implementación del pipeline de archivos aislado | Propuesto |
 | [023](023-campanias-decisiones-de-implementacion.md) | Campañas: decisiones de implementación | Propuesto |
 | [024](024-envio-y-sincronizacion.md) | Envío y sincronización con Mandrill | Propuesto |
+| [025](025-reportes.md) | Reportes: definiciones, alcance y datos personales | Propuesto |

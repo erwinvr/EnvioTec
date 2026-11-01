@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.8.4
+  version: 0.8.6
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -1187,6 +1187,87 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/campaigns:
+    get:
+      summary: 'Campañas iniciadas con sus cifras (alcance por área; las aperturas son aproximadas)'
+      operationId: listCampaignReports
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: from, in: query, schema: { type: string, format: date }, description: 'Inicio del envío desde (America/La_Paz)' }
+        - { name: to, in: query, schema: { type: string, format: date }, description: 'Inicio del envío hasta, inclusive (America/La_Paz)' }
+      responses:
+        '200': { description: 'Campañas con destinatarios, aceptados, entregados, abiertos, con clics, rebotes, quejas y bajas' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/campaigns/{id}:
+    get:
+      summary: 'Cifras de una campaña'
+      operationId: getCampaignReport
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Cifras de la campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/campaigns/{id}/recipients:
+    get:
+      summary: 'Destinatarios con su estado y eventos (emails enmascarados sin contacts.view)'
+      operationId: listCampaignReportRecipients
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: status, in: query, schema: { type: string, enum: [sent, rejected, suppressed, pending, not_sent] } }
+        - { name: event, in: query, schema: { type: string, enum: [delivered, opened, clicked, hard_bounce, soft_bounce, complaint, unsubscribe] } }
+      responses:
+        '200': { description: Destinatarios }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/campaigns/{id}/export:
+    get:
+      summary: 'Exportar el reporte de destinatarios en CSV (fórmulas neutralizadas, enmascarado sin contacts.view, auditado)'
+      operationId: exportCampaignReport
+      x-enviotec-permission: reports.export
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/contacts/search:
+    post:
+      summary: 'Campañas recibidas por una dirección, en las áreas del usuario'
+      description: 'La dirección va en el body y no en la URL. Cada búsqueda se audita solo con el hash del email.'
+      operationId: searchContactReport
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '200': { description: Envíos a esa dirección }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Error' }
   /api/v1/templates:
     get:

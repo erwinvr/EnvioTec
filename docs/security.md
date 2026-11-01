@@ -470,3 +470,21 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 - Spike 0.5 con la API key real: R1, R2, R3, R4 (baja con un clic) y R6. Hasta entonces, ningún correo real sale de EnvioTec.
 - Reportes por campaña y por contacto (8.6).
+
+### Fase 8.6 — Reportes (2026-11-01)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| ADR-008 (IDOR entre áreas) | Filtro por área en cada consulta; la campaña de otra área responde 404 en cifras, destinatarios y exportación y no aparece en el listado; `areas.view_all` ve todas | `integration/reports.test.js`, `authorization-matrix.test.js` |
+| Parte B (enmascarado) | Correos enmascarados sin `contacts.view`, en pantalla y en la exportación; la exportación no incluye nombres ni atributos | `reports.test.js` |
+| A8 (CSV injection) | Celdas que empiezan con `=`, `+`, `-`, `@`, tabulación o retorno se prefijan con apóstrofo | `reports.test.js`, `unit/audit-logs.test.js` |
+| A8 (SQL injection) | Filtros de estado y evento por allowlist con fragmentos SQL fijos; un valor fuera de la lista responde 422 | `reports.test.js` |
+| Privacidad (logs) | La búsqueda por contacto es un `POST` con la dirección en el body; se audita con el hash del email, nunca con la dirección | `reports.test.js` |
+| Auditoría | Exportación (`reports.export`, indicando si salió enmascarada) y búsqueda por contacto (`reports.contact_lookup`) | `reports.test.js` |
+| A9 | Pantallas de reportes sin violaciones de CSP | `e2e/run.mjs` |
+
+**Pendiente:**
+
+- Cálculo de cifras al leer: revisar el rendimiento con volumen real en la Fase 9 (ADR-025).

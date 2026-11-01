@@ -242,6 +242,17 @@ try {
     await page.waitForSelector(`td:text-is("baja.${suffix}@e2e.test")`);
   });
 
+  await step('reportes por campaña y búsqueda por contacto', async () => {
+    await page.goto(`${BASE_URL}/#/reportes`);
+    await ready(page, '#/reportes');
+    await page.waitForSelector('.table-body .empty, .table-body table');
+    await page.click('.page-header button:text-is("Buscar por contacto")');
+    await ready(page, '#/reportes/contacto');
+    await page.fill('#field-email', `baja.${suffix}@e2e.test`);
+    await page.click('main form button[type="submit"]');
+    await page.waitForSelector('main section .table-body .empty, main section .table-body table');
+  });
+
   await step('cambio de idioma', async () => {
     await page.selectOption('select.language', 'en');
     await page.waitForSelector('nav a:text-is("Users")');

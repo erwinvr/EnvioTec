@@ -10,6 +10,7 @@ const ITEMS = [
   { path: '/plantillas', label: 'nav.templates', permission: 'templates.view' },
   { path: '/contactos', label: 'nav.contacts', permission: 'contacts.view' },
   { path: '/supresion', label: 'nav.suppressions', permission: 'suppressions.view' },
+  { path: '/reportes', label: 'nav.reports', permission: 'reports.view' },
   { path: '/mis-envios', label: 'nav.myQuota', permission: 'quotas.view' },
   { path: '/usuarios', label: 'nav.users', permission: 'users.view' },
   { path: '/roles', label: 'nav.roles', permission: 'roles.view' },
