@@ -10,7 +10,7 @@
     "start": "node src/server.js",
     "start:worker": "node src/worker.js",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
-    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include=\"src/core/**\" --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70 \"tests/**/*.test.js\""
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include=\"src/core/**\" --test-coverage-include=\"src/modules/**\" --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=70 \"tests/**/*.test.js\""
   },
   "dependencies": {
     "ajv": "8.20.0",

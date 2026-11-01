@@ -23,6 +23,27 @@ const PREFIX = `matrix_${randomBytes(4).toString('hex')}`;
 const MATRIX_CASES = {
   'GET /api/v1/permissions': { url: () => '/api/v1/permissions', success: 200 },
   'POST /api/v1/users/:id/mfa/reset': { url: (f) => `/api/v1/users/${f.targetId}/mfa/reset`, success: 200 },
+  'GET /api/v1/users': { url: () => '/api/v1/users', success: 200 },
+  'GET /api/v1/users/review/local': { url: () => '/api/v1/users/review/local', success: 200 },
+  'GET /api/v1/users/:id': { url: (f) => `/api/v1/users/${f.targetId}`, success: 200 },
+  'POST /api/v1/users': {
+    url: () => '/api/v1/users', success: 201,
+    payload: (f) => ({ username: `${PREFIX}.creado`, email: `${PREFIX}.creado@example.test`, displayName: 'Creado', areaId: f.areaId }),
+  },
+  'PATCH /api/v1/users/:id': { url: (f) => `/api/v1/users/${f.targetId}`, success: 200, payload: () => ({ displayName: 'Otro' }) },
+  'POST /api/v1/users/:id/disable': { url: (f) => `/api/v1/users/${f.targetId}/disable`, success: 200 },
+  'POST /api/v1/users/:id/enable': { url: (f) => `/api/v1/users/${f.targetId}/enable`, success: 200 },
+  'POST /api/v1/users/:id/unlock': { url: (f) => `/api/v1/users/${f.targetId}/unlock`, success: 200 },
+  'POST /api/v1/users/:id/reset-password': { url: (f) => `/api/v1/users/${f.targetId}/reset-password`, success: 200 },
+  'POST /api/v1/users/:id/renew': {
+    url: (f) => `/api/v1/users/${f.targetId}/renew`, success: 200,
+    payload: () => ({ days: 10, reason: 'Renovación de prueba de la matriz' }),
+  },
+  'PUT /api/v1/users/:id/roles': { url: (f) => `/api/v1/users/${f.targetId}/roles`, success: 200, payload: () => ({ roleIds: [] }) },
+  'GET /api/v1/users/:id/sessions': { url: (f) => `/api/v1/users/${f.targetId}/sessions`, success: 200 },
+  'DELETE /api/v1/users/:id/sessions': { url: (f) => `/api/v1/users/${f.targetId}/sessions`, success: 200 },
+  'POST /api/v1/areas': { url: () => '/api/v1/areas', success: 201, payload: () => ({ name: `${PREFIX}-nueva` }) },
+  'PATCH /api/v1/areas/:id': { url: (f) => `/api/v1/areas/${f.areaId}`, success: 200, payload: () => ({ adDepartment: `${PREFIX}-dep` }) },
   'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
   'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
@@ -136,13 +157,13 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
 
   // State-changing requests carry what the browser would send: Origin and
   // the session's CSRF token.
-  const request = (method, url, token) => {
+  const request = (method, url, token, payload) => {
     const headers = { origin: config.security.appOrigin };
     if (token) {
       headers.cookie = `${SESSION_COOKIE}=${token}`;
       headers['x-csrf-token'] = deriveCsrfToken(config.security.csrfSecret, hashToken(token));
     }
-    return app.inject({ method, url, headers });
+    return app.inject({ method, url, headers, payload });
   };
 
   it('cada ruta protegida tiene su caso en la matriz', () => {
@@ -156,12 +177,12 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const [method] = route.split(' ');
 
     it(`${route}: sin sesión -> 401`, async () => {
-      const res = await request(method, testCase.url(fixtures));
+      const res = await request(method, testCase.url(fixtures), undefined, testCase.payload?.(fixtures));
       assert.equal(res.statusCode, 401);
     });
 
     it(`${route}: sesión sin el permiso -> 403`, async () => {
-      const res = await request(method, testCase.url(fixtures), tokens.withoutPermission);
+      const res = await request(method, testCase.url(fixtures), tokens.withoutPermission, testCase.payload?.(fixtures));
       assert.equal(res.statusCode, 403);
       assert.equal(res.json().error.code, 'FORBIDDEN');
       const { rows } = await owner.query(
@@ -173,8 +194,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     });
 
     it(`${route}: sesión con el permiso -> ${testCase.success}`, async () => {
-      const res = await request(method, testCase.url(fixtures), tokens.allowed);
-      assert.equal(res.statusCode, testCase.success);
+      const res = await request(method, testCase.url(fixtures), tokens.allowed, testCase.payload?.(fixtures));
+      assert.equal(res.statusCode, testCase.success, res.body);
     });
   }
 

@@ -174,6 +174,8 @@ function buildConfig(raw) {
       adMinutes: raw.LOCKOUT_AD_MIN,
     };
     config.passwordReset = { ttlMinutes: raw.PASSWORD_RESET_TTL_MIN };
+  }
+  if ('AD_ENABLED' in raw) {
     config.ad = raw.AD_ENABLED
       ? {
         enabled: true,

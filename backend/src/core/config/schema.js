@@ -70,9 +70,14 @@ export const PROFILES = {
       'MAIL_FROM_NAME',
     ],
   },
+  // The worker reviews AD accounts and sends account notices (phase 5).
   worker: {
     required: ['NODE_ENV', 'DATABASE_URL', 'REDIS_URL'],
-    optional: ['LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS'],
+    optional: [
+      'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS',
+      'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
+      'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME',
+    ],
   },
   // Migrations, seeds and bootstrap (database/scripts), with the app_owner user.
   tools: {

@@ -16,10 +16,10 @@ Si algo de la Parte B contradice la Parte A, detente, explica el conflicto y pro
 
 ## Estado del proyecto
 
-- **Fase actual:** 5 — Usuarios. Plan pendiente de aprobación.
+- **Fase actual:** 6 — Roles y permisos. Plan pendiente de aprobación.
 - **En paralelo:** 0.5 — Spike de Mandrill, plan aprobado; en espera de una API key válida (`MANDRILL_API_KEY` como variable de entorno), remitente del subdominio verificado y buzón de prueba (erwin.villazon@gmail.com).
-- **Fases aprobadas:** 4 — Auditoría (2026-10-31; `npm run check` en verde, 11 pasos; R12 resuelto). 3 — Autenticación (2026-10-31; `npm run check` en verde, ADR-018 y ADR-019 aceptados; pendientes R15 AD real, R16 key de sistema de Mandrill, R17 red al controlador de dominio). 2 — Base de datos y RBAC (2026-10-31; `npm run check` en verde, ADR-016 y ADR-017 aceptados). 1 — Base del proyecto (2026-10-31; `npm run check` en verde, ADR-015 aceptado). 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
-- **Siguiente paso:** aprobación del plan de la Fase 5; después, implementarla.
+- **Fases aprobadas:** 5 — Usuarios (2026-10-31; `npm run check` en verde, ADR-020 aceptado; cuenta de emergencia exenta también de inactividad). 4 — Auditoría (2026-10-31; `npm run check` en verde, 11 pasos; R12 resuelto). 3 — Autenticación (2026-10-31; `npm run check` en verde, ADR-018 y ADR-019 aceptados; pendientes R15 AD real, R16 key de sistema de Mandrill, R17 red al controlador de dominio). 2 — Base de datos y RBAC (2026-10-31; `npm run check` en verde, ADR-016 y ADR-017 aceptados). 1 — Base del proyecto (2026-10-31; `npm run check` en verde, ADR-015 aceptado). 0 — Análisis y modelo de amenazas (2026-10-31). Entregables: `docs/security.md`, `docs/architecture.md`, `docs/decisions/` (ADR 001–014, aceptados; 005 y 013 sujetos al spike) y Parte B actualizada.
+- **Siguiente paso:** aprobación del plan de la Fase 6; después, implementarla.
 
 Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases aprobadas, siguiente paso).
 

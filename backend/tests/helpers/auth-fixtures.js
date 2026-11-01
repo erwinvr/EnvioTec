@@ -66,13 +66,18 @@ export async function createHarness({ env = {}, mailer, adClientFactory } = {}) 
       return rows[0].id;
     },
 
-    async localUser(name, { roles: roleIds = [], mustChangePassword = false, expiresInMinutes = 43200 } = {}) {
+    // mfa: true marks MFA as configured (with a placeholder secret), for
+    // users whose sessions are created directly with session().
+    async localUser(name, {
+      roles: roleIds = [], mustChangePassword = false, expiresInMinutes = 43200, mfa = false, area = areaId,
+    } = {}) {
       const { rows } = await owner.query(
         `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, must_change_password,
-                            expires_at)
-         VALUES ($1, $2, $3, 'local', $4, $5, $6, now() + make_interval(mins => $7)) RETURNING id`,
-        [`${prefix}.${name}`, `${prefix}.${name}@example.test`, `Usuario ${name}`, passwordHash, areaId,
-          mustChangePassword, expiresInMinutes],
+                            expires_at, mfa_secret_encrypted, mfa_enabled_at)
+         VALUES ($1, $2, $3, 'local', $4, $5, $6, now() + make_interval(mins => $7),
+                 CASE WHEN $8 THEN '\\x00'::bytea END, CASE WHEN $8 THEN now() END) RETURNING id`,
+        [`${prefix}.${name}`, `${prefix}.${name}@example.test`, `Usuario ${name}`, passwordHash, area,
+          mustChangePassword, expiresInMinutes, mfa],
       );
       for (const roleId of roleIds) await owner.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [rows[0].id, roleId]);
       return { id: rows[0].id, username: `${prefix}.${name}`, email: `${prefix}.${name}@example.test` };
@@ -86,6 +91,22 @@ export async function createHarness({ env = {}, mailer, adClientFactory } = {}) 
       );
       for (const roleId of roleIds) await owner.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [rows[0].id, roleId]);
       return { id: rows[0].id, username: `${prefix}.${name}` };
+    },
+
+    // A session as if the user had just logged in with MFA (and reauthenticated).
+    async session(userId, { reauth = true } = {}) {
+      const token = randomBytes(32).toString('base64url');
+      await owner.query(
+        `INSERT INTO sessions (id, user_id, expires_at, mfa_verified_at, reauth_at)
+         VALUES ($1, $2, now() + interval '8 hours', now(), CASE WHEN $3 THEN now() END)`,
+        [hashToken(token), userId, reauth],
+      );
+      return token;
+    },
+
+    async area(name) {
+      const { rows } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [`${prefix}-${name}`]);
+      return rows[0].id;
     },
 
     // Sends a request like the browser would: Origin always; cookie and CSRF

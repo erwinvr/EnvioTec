@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -276,6 +276,282 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Empty' }
         '404': { $ref: '#/components/responses/Error' }
+  /api/v1/users:
+    get:
+      summary: Listar usuarios (alcance por área sin areas.view_all)
+      operationId: listUsers
+      x-enviotec-permission: users.view
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: status, in: query, schema: { type: string, enum: [active, disabled, locked] } }
+        - { name: authSource, in: query, schema: { type: string, enum: [local, ad] } }
+        - { name: areaId, in: query, schema: { type: string, format: uuid } }
+        - { name: roleId, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [username, displayName, createdAt, lastLoginAt, expiresAt], default: username } }
+        - { name: direction, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        '200': { $ref: '#/components/responses/UserList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Crear una cuenta local
+      description: Devuelve una contraseña temporal de 20 caracteres que se muestra una sola vez; el usuario la cambia en su primer login. Vigencia por defecto y máxima según system_settings.
+      operationId: createLocalUser
+      x-enviotec-permission: users.create_local
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, email, displayName, areaId]
+              properties:
+                username: { type: string, pattern: '^[A-Za-z0-9._-]{3,64}$' }
+                email: { type: string }
+                displayName: { type: string }
+                areaId: { type: string, format: uuid }
+                expiresAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Usuario y contraseña temporal }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/review/local:
+    get:
+      summary: 'Revisión de cuentas locales activas: último acceso, vencimiento e inactividad'
+      operationId: reviewLocalUsers
+      x-enviotec-permission: users.view
+      responses:
+        '200': { description: Cuentas locales activas }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/users/{id}:
+    get:
+      summary: 'Detalle de un usuario (fuera del alcance: 404)'
+      operationId: getUser
+      x-enviotec-permission: users.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: Editar nombre, email o área de una cuenta local
+      description: Cambiar el email exige re-autenticación. Las cuentas de AD responden 409.
+      operationId: updateUser
+      x-enviotec-permission: users.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                displayName: { type: string }
+                email: { type: string }
+                areaId: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/disable:
+    post:
+      summary: Desactivar un usuario (revoca sus sesiones)
+      description: Re-autenticación. No a uno mismo ni al último superadmin activo.
+      operationId: disableUser
+      x-enviotec-permission: users.disable
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/enable:
+    post:
+      summary: Reactivar un usuario
+      description: Re-autenticación. Una cuenta local vencida se reactiva con una renovación.
+      operationId: enableUser
+      x-enviotec-permission: users.disable
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/unlock:
+    post:
+      summary: Quitar el bloqueo temporal
+      operationId: unlockUser
+      x-enviotec-permission: users.unlock
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/reset-password:
+    post:
+      summary: Generar una contraseña temporal (solo cuentas locales)
+      description: Re-autenticación. Obliga a cambiarla y revoca las sesiones.
+      operationId: resetUserPassword
+      x-enviotec-permission: users.reset_password
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/renew:
+    post:
+      summary: Renovar la vigencia de una cuenta local
+      description: Re-autenticación y motivo obligatorio; hasta renewal_max_days y nunca más allá de max_validity_days desde hoy. Nadie renueva su propia cuenta. Reactiva si estaba desactivada por vencimiento o inactividad.
+      operationId: renewUser
+      x-enviotec-permission: users.renew_local
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [days, reason]
+              properties:
+                days: { type: integer, minimum: 1 }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/roles:
+    put:
+      summary: Reemplazar los roles manuales de un usuario
+      description: Re-autenticación. 403 PRIVILEGE_ESCALATION (auditado) si un rol agregado o quitado tiene permisos que el actor no tiene; 409 sobre los propios roles o el último superadmin; 422 para un rol administrativo en una cuenta de AD o un rol que asigna un grupo de AD. Revoca las sesiones del usuario.
+      operationId: replaceUserRoles
+      x-enviotec-permission: roles.assign
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [roleIds]
+              properties:
+                roleIds: { type: array, maxItems: 50, items: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/sessions:
+    get:
+      summary: Sesiones activas de un usuario
+      operationId: listUserSessions
+      x-enviotec-permission: sessions.view_any
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Sesiones }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Revocar todas las sesiones de un usuario
+      operationId: revokeUserSessions
+      x-enviotec-permission: sessions.revoke_any
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Cantidad revocada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/areas:
+    get:
+      summary: Áreas (nombres para cualquier usuario; el department de AD solo con areas.manage)
+      operationId: listAreas
+      x-enviotec-authenticated: true
+      responses:
+        '200': { description: Áreas }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      summary: Crear un área
+      operationId: createArea
+      x-enviotec-permission: areas.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100 }
+                adDepartment: { type: [string, 'null'] }
+      responses:
+        '201': { description: Área creada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/areas/{id}:
+    patch:
+      summary: Modificar un área (las áreas no se borran)
+      operationId: updateArea
+      x-enviotec-permission: areas.manage
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                adDepartment: { type: [string, 'null'] }
+                isActive: { type: boolean }
+      responses:
+        '200': { description: Área }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /api/v1/users/{id}/mfa/reset:
     post:
       summary: Reiniciar el MFA de un usuario (revoca sus sesiones)
@@ -460,6 +736,25 @@ components:
             properties:
               success: { type: boolean, const: true }
               data: { type: object, additionalProperties: false }
+    User:
+      description: Usuario
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: true }
+              data: { $ref: '#/components/schemas/User' }
+    UserList:
+      description: Usuarios
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: true }
+              data: { type: array, items: { $ref: '#/components/schemas/User' } }
+              meta: { type: object, properties: { total: { type: integer }, page: { type: integer }, pageSize: { type: integer } } }
     Error:
       description: Error con el formato estándar
       content:
@@ -479,6 +774,30 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    User:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string }
+        displayName: { type: string }
+        authSource: { type: string, enum: [local, ad] }
+        areaId: { type: [string, 'null'] }
+        areaName: { type: [string, 'null'] }
+        status: { type: string, enum: [active, disabled, locked] }
+        disabledReason: { type: [string, 'null'], enum: [manual, expired, inactive, null] }
+        mustChangePassword: { type: boolean }
+        mfaEnabled: { type: boolean }
+        lockedUntil: { type: [string, 'null'], format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        exemptFromExpiry: { type: boolean }
+        isEmergency: { type: boolean }
+        lastLoginAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        roles:
+          type: array
+          items: { type: object, properties: { id: { type: string }, name: { type: string }, source: { type: string, enum: [manual, ad_group] } } }
     SessionState:
       type: object
       additionalProperties: false
@@ -514,7 +833,7 @@ components:
             required: [code, description, administrative]
             properties:
               code: { type: string, example: users.view }
-              description: { type: string }
+              description: '{ type: string }'
               administrative: { type: boolean, description: Exige MFA y solo se asigna a cuentas locales }
         meta:
           type: object
@@ -558,7 +877,7 @@ components:
             code:
               type: string
               enum: [VALIDATION_ERROR, BAD_REQUEST, AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS, FORBIDDEN,
-                     AUTH_STEP_REQUIRED, REAUTH_REQUIRED, CSRF_REJECTED, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE,
+                     AUTH_STEP_REQUIRED, REAUTH_REQUIRED, PRIVILEGE_ESCALATION, CSRF_REJECTED, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE,
                      UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED, INTERNAL_ERROR, SERVICE_UNAVAILABLE]
             message: { type: string }
             requestId: { type: string, format: uuid }

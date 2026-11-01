@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers';
 import { createSessionRepository } from '../../core/auth/session.repository.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { InvalidCredentialsError, RateLimitError } from '../../core/errors/errors.js';
+import { createAdSync } from './ad-sync.js';
 
 // Login (A5, ADR-006): one provider per account, chosen by auth_source; AD
 // accounts that do not exist yet are created on their first successful login
@@ -62,19 +63,8 @@ export function createLoginService(deps) {
     return issued;
   }
 
-  // Applies what AD says about the account: data, area by department and the
-  // roles of the mapped groups.
-  async function syncAdAccount(client, userId, entry, groups, mappings, context) {
-    const areaId = await repository.findAreaByDepartment(client, entry.department);
-    await repository.updateAdUser(client, userId, entry, areaId);
-    const roleIds = mappings.filter((mapping) => groups.has(mapping.group_dn)).map((mapping) => mapping.role_id);
-    if (await repository.syncAdRoles(client, userId, roleIds)) {
-      await audit.record(client, {
-        actor: { type: 'system' }, action: 'user.roles_sync', resourceType: 'user', resourceId: userId,
-        result: 'success', context, metadata: { source: 'ad_group', roleIds },
-      });
-    }
-  }
+  const adSync = createAdSync({ repository, audit });
+  const syncAdAccount = (...args) => adSync.apply(...args);
 
   function hasValidAdData(entry) {
     return Boolean(entry.objectGuid && USERNAME_PATTERN.test(entry.username ?? '')

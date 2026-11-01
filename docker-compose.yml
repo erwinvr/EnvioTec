@@ -91,6 +91,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url_worker
+      AD_ENABLED: ${AD_ENABLED:-false}
       NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,redis,localhost,127.0.0.1

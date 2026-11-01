@@ -1,5 +1,5 @@
 import { errorBody } from '../http/response.js';
-import { AppError, NotFoundError, ValidationError } from './errors.js';
+import { AppError, ConflictError, NotFoundError, ValidationError } from './errors.js';
 
 // Fastify errors that map to a specific public error. Everything else in the
 // 4xx range becomes a generic BAD_REQUEST, and anything else a generic 500.
@@ -21,8 +21,16 @@ const VALIDATION_CODES = {
   pattern: 'invalid_format',
 };
 
+// PostgreSQL errors that are the client's fault (A10): translated without
+// exposing the SQL, the constraint or the values.
+const DATABASE_ERRORS = {
+  23505: () => new ConflictError('Ya existe un registro con esos datos'),
+  23503: () => new ConflictError('El registro está en uso o hace referencia a otro inexistente'),
+};
+
 export function toAppError(error) {
   if (error instanceof AppError) return error;
+  if (typeof error.code === 'string' && error.severity && DATABASE_ERRORS[error.code]) return DATABASE_ERRORS[error.code]();
   if (Array.isArray(error.validation)) {
     return new ValidationError(error.validation.map((item) => toValidationDetail(item, error.validationContext)));
   }

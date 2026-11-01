@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 4 (auditoría): API de autenticación completa, auditoría encadenada con verificación, consulta y exportación. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 5 (usuarios): API de autenticación, auditoría, usuarios locales y de AD con vigencia, roles y áreas, y trabajos del worker. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -27,7 +27,7 @@ worker ──▶ PostgreSQL, Redis, egress-proxy
 
 - **nginx:** TLS, frontend en `/`, `/api/*` y `/health/*` al backend, headers de seguridad (ADR-001).
 - **backend:** API sin estado; varias réplicas posibles.
-- **worker:** procesos en segundo plano: hoy mantiene las particiones mensuales; las colas llegan con los módulos que las necesitan.
+- **worker:** trabajos periódicos (ADR-020): particiones mensuales, control horario de vigencia de cuentas locales y revisión de AD cada 15 minutos; las colas de envío llegan en la Fase 8.
 - **egress-proxy:** única salida a internet, con allowlist de dominios (ADR-009, ADR-015).
 - Redes Docker `edge`, `data` y `egress` internas (sin internet); PostgreSQL y Redis sin puertos publicados en producción.
 - Todos los contenedores corren sin root, con sistema de archivos de solo lectura, `cap_drop: ALL`, `no-new-privileges`, healthcheck y límites de CPU y memoria.
@@ -120,7 +120,7 @@ Ejecuta, en orden y deteniéndose en el primer fallo:
 4. Construcción de imágenes y arranque del stack completo (proyecto Compose aparte, sin puertos publicados)
 5. Migraciones: aplicar, revertir todo y volver a aplicar sobre la base vacía; seed de sistema
 6. Tests de base de datos (`database/tests`): privilegios de `app_runtime`, triggers, restricciones, seeds y bootstrap
-7. Tests unitarios, de integración y de seguridad del backend dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core`
+7. Tests unitarios, de integración y de seguridad del backend dentro de un contenedor conectado a las redes internas, con cobertura mínima del 80 % en `backend/src/core` y `backend/src/modules`
 8. Verificación de la cadena de auditoría, sobre todo lo que auditaron los tests
 9. `npm audit --audit-level=high` (raíz, backend y database)
 10. gitleaks sobre el historial de Git
@@ -131,7 +131,7 @@ No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proye
 ## Tests
 
 - `backend/tests/unit`: configuración, logger, errores, health, contraseñas, TOTP (vectores de los RFC 4226 y 6238), cifrado, CSRF, etapas de sesión, bloqueo, rate limiter, proveedor de AD y correo del sistema.
-- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019).
+- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
 - `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
 

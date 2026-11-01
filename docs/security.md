@@ -281,3 +281,33 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 - `audit.export` no es un permiso administrativo, así que un perfil de auditoría podía exportar sin MFA. Se decidió exigir re-autenticación para la exportación de auditoría (aprobado el 2026-10-31).
 - `seq` tiene huecos cuando una transacción auditada se revierte. La verificación se basa en el enlace de los hashes, no en la continuidad de `seq`, y el informe distingue `altered` de `broken_link`.
+
+### Fase 5 — Usuarios (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A6 (anti-escalamiento) | Regla 1: no se asigna ni se quita un rol con permisos que el actor no tiene (403 `PRIVILEGE_ESCALATION`, auditado aunque la transacción se revierta); regla 2: nadie modifica sus propios roles; regla 3: no se desactiva ni se quita el rol al último superadmin activo (la cuenta de emergencia no cuenta; advisory lock contra carreras); regla 4: ningún rol administrativo a cuentas de AD (servicio y trigger); los roles de grupos de AD no se editan a mano; regla 6: todo cambio revoca las sesiones del usuario y se audita | `unit/users-rules.test.js` (todas las ramas), `integration/users.test.js` |
+| A6 / ADR-008 (IDOR) | Todo usuario objetivo se carga con el alcance del actor: sin `areas.view_all`, otra área responde 404 en lectura y en cada acción; el alta solo en áreas activas del propio alcance | `users.test.js`, `authorization-matrix.test.js` |
+| A8 (mass assignment) | Bodies con `additionalProperties: false` y listas cerradas de campos; `status`, `roles`, `passwordHash` y desconocidos responden 422 | `users.test.js` |
+| A8 (inyección en listados) | Orden por allowlist (`SORT_COLUMNS`), búsqueda con `LIKE` escapado, filtros parametrizados, página máxima 100 y desplazamiento máximo 10.000 | `users.test.js` |
+| A5 (re-autenticación) | Desactivar, reactivar, asignar roles, resetear contraseña, renovar y cambiar el email exigen re-autenticación de los últimos 5 minutos | `users.test.js`, `authorization-matrix.test.js` |
+| A5 (contraseña inicial) | 120 bits aleatorios generados por el servidor, mostrados una sola vez; obligan a cambiarla en el primer login; el reset por administrador revoca las sesiones | `users.test.js` |
+| Parte B (vigencia) | Alta con vigencia por defecto y nunca mayor al máximo; renovación con motivo, hasta 90 días, sin superar el máximo desde hoy, nunca la propia, reactiva solo cuentas desactivadas por vencimiento o inactividad; trabajo horario que desactiva vencidas e inactivas (45 días desde el último acceso, la creación o la última renovación), revoca sesiones, audita y avisa una vez antes del vencimiento a la cuenta y a los administradores | `unit/users-rules.test.js`, `users.test.js`, `user-jobs.test.js` |
+| Parte B (AD) | Revisión cada 15 minutos: cuenta deshabilitada, vencida, inexistente o fuera del grupo pierde sus sesiones (auditado solo cuando revoca); área y roles de grupo siguen a AD y un cambio de roles revoca las sesiones; con AD caído la ronda se aborta sin revocar | `user-jobs.test.js` |
+| ADR-020 | Cada trabajo corre en una sola réplica a la vez (advisory lock de sesión) | `user-jobs.test.js` |
+| A10 (errores de base) | Violaciones de `UNIQUE` y de FK se traducen a 409 sin exponer SQL ni restricciones | `users.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Gestión de roles, de permisos por rol y de equivalencias de grupos de AD (Fase 6).
+- Parámetros del sistema editables por `settings.manage` (Fase 6, junto con la administración).
+- Pantallas de usuarios y áreas (Fase 7). La contraseña temporal se muestra una sola vez y la UI debe advertirlo.
+- Los avisos por correo dependen de la API key de sistema (R16).
+
+**Hallazgos de la fase:**
+
+- En el plan escribí que la cuenta de emergencia quedaba exenta de vigencia pero no de inactividad. Al implementarlo se vio que eso la desactivaría a los 45 días sin uso, justo lo contrario de su propósito: existe para el día en que nadie más puede entrar. Las cuentas exentas de vigencia también quedan exentas de la desactivación por inactividad; el MFA sigue siendo obligatorio y cada uso alerta a los administradores (Fase 4).
+- La revisión de AD no cambia el `status` de las cuentas: revoca sus sesiones y el login vuelve a consultar AD. Así, una cuenta rehabilitada en AD recupera el acceso sin intervención manual.
+- La cobertura de `npm run check` pasó a medir también `src/modules/**` (services incluidos), como pide A11.
