@@ -39,6 +39,38 @@ describe('privilegios de app_runtime', () => {
     });
   });
 
+  it('append_audit_log encadena cada registro con el anterior y su hash se puede recalcular', async () => {
+    await inRollback(runtime, async () => {
+      const append = (action) => runtime.query(
+        "SELECT append_audit_log('system', NULL, NULL, $1, 'test', '1', 'success', '10.0.0.1', 'ua', 'req', '{\"k\": 1}')",
+        [action],
+      );
+      await append('test.first');
+      await append('test.second');
+      const { rows } = await runtime.query(
+        `SELECT action, hash, prev_hash,
+                hash = audit_log_canonical(id, occurred_at, actor_type, actor_user_id, actor_session_id, action,
+                         resource_type, resource_id, result, ip, user_agent, request_id, metadata, prev_hash) AS valid
+           FROM audit_logs ORDER BY seq DESC LIMIT 2`,
+      );
+      assert.equal(rows[0].action, 'test.second');
+      assert.ok(rows[0].prev_hash.equals(rows[1].hash));
+      assert.ok(rows[0].valid && rows[1].valid);
+    });
+  });
+
+  it('un cambio en cualquier campo de un registro rompe su hash', async () => {
+    const { rows } = await runtime.query(
+      `SELECT audit_log_canonical('01900000-0000-7000-8000-000000000000', '2026-01-01T00:00:00Z', 'system', NULL, NULL, 'a.b', NULL, NULL, 'success', NULL,
+                                  NULL, NULL, '{}', NULL) AS h1`,
+    );
+    const { rows: other } = await runtime.query(
+      `SELECT audit_log_canonical('01900000-0000-7000-8000-000000000000', '2026-01-01T00:00:00Z', 'system', NULL, NULL, 'a.b', NULL, NULL, 'failure', NULL,
+                                  NULL, NULL, '{}', NULL) AS h2`,
+    );
+    assert.ok(!rows[0].h1.equals(other[0].h2));
+  });
+
   it('no puede alterar el esquema', async () => {
     await inRollback(runtime, async () => {
       await expectFailure(runtime, 'CREATE TABLE intruder (id int)', [], /42501|permission denied/);

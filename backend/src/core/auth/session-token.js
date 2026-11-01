@@ -30,3 +30,13 @@ export function readCookie(header, name) {
   }
   return null;
 }
+
+// Set-Cookie value for the session (A5): __Host- prefix, so the browser
+// requires Secure, Path=/ and no Domain; HttpOnly and SameSite=Strict.
+export function sessionCookie(token, maxAgeSeconds) {
+  return `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${maxAgeSeconds}; Secure; HttpOnly; SameSite=Strict`;
+}
+
+export function clearedSessionCookie() {
+  return `${SESSION_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict`;
+}

@@ -24,8 +24,17 @@ export class AuthenticationError extends AppError {
 }
 
 export class AuthorizationError extends AppError {
-  constructor(message = 'Acceso denegado') {
-    super(message, { statusCode: 403, code: 'FORBIDDEN' });
+  constructor(message = 'Acceso denegado', { code = 'FORBIDDEN', details } = {}) {
+    super(message, { statusCode: 403, code, details });
+  }
+}
+
+// Login failure. One message for every cause (wrong password, unknown user,
+// locked, disabled or expired account) to prevent user enumeration (A5).
+export class InvalidCredentialsError extends AppError {
+  constructor() {
+    super('Usuario o contraseña incorrectos, o la cuenta está bloqueada temporalmente',
+      { statusCode: 401, code: 'INVALID_CREDENTIALS' });
   }
 }
 
@@ -42,8 +51,9 @@ export class ConflictError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(message = 'Demasiadas solicitudes; intente más tarde') {
+  constructor(message = 'Demasiadas solicitudes; intente más tarde', { retryAfterSeconds } = {}) {
     super(message, { statusCode: 429, code: 'RATE_LIMITED' });
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

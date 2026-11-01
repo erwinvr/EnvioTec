@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { successSchema } from '../../src/core/http/response.js';
-import { buildTestApp, memoryLogger } from '../helpers/app.js';
+import { buildTestApp, memoryLogger, ORIGIN } from '../helpers/app.js';
 
 const INTERNAL_DETAIL = 'SELECT password_hash FROM users WHERE id = 1 /app/src/secret.js';
 
@@ -54,7 +54,7 @@ describe('exposición de información en respuestas', () => {
   });
 
   it('rechaza propiedades desconocidas en el body con 422 sin devolver valores', async () => {
-    const res = await app.inject({ method: 'POST', url: '/api/v1/echo', payload: { name: 'ana', status: 'active' } });
+    const res = await app.inject({ method: 'POST', url: '/api/v1/echo', headers: { origin: ORIGIN }, payload: { name: 'ana', status: 'active' } });
     assert.equal(res.statusCode, 422);
     assert.deepEqual(res.json().error.details, [{ field: 'status', code: 'unknown_field', location: 'body' }]);
     assert.ok(!res.body.includes('active'));
@@ -62,7 +62,7 @@ describe('exposición de información en respuestas', () => {
 
   it('un JSON malformado devuelve 400 genérico', async () => {
     const res = await app.inject({
-      method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'application/json' }, payload: '{"name":',
+      method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'application/json', origin: ORIGIN }, payload: '{"name":',
     });
     assert.equal(res.statusCode, 400);
     assert.equal(res.json().error.code, 'BAD_REQUEST');
@@ -71,7 +71,7 @@ describe('exposición de información en respuestas', () => {
 
   it('un body mayor al límite devuelve 413', async () => {
     const res = await app.inject({
-      method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'application/json' },
+      method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'application/json', origin: ORIGIN },
       payload: JSON.stringify({ name: 'x'.repeat(2 * 1024 * 1024) }),
     });
     assert.equal(res.statusCode, 413);
@@ -79,7 +79,7 @@ describe('exposición de información en respuestas', () => {
   });
 
   it('un tipo de contenido no admitido devuelve 415', async () => {
-    const res = await app.inject({ method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'text/xml' }, payload: '<a/>' });
+    const res = await app.inject({ method: 'POST', url: '/api/v1/echo', headers: { 'content-type': 'text/xml', origin: ORIGIN }, payload: '<a/>' });
     assert.equal(res.statusCode, 415);
   });
 

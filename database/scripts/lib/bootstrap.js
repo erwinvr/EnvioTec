@@ -84,6 +84,12 @@ export async function bootstrapAdmin(client, input, { emergency = false, argon2 
       emergency ? 0 : settingRows[0].days],
   );
   await client.query("INSERT INTO user_roles (user_id, role_id, source) VALUES ($1, $2, 'manual')", [userRows[0].id, roleId]);
+  // Audited in the same transaction (A7): the account and its event exist together or not at all.
+  await client.query(
+    `SELECT append_audit_log('system', NULL, NULL, 'user.bootstrap', 'user', $1, 'success', NULL, NULL, NULL,
+                             jsonb_build_object('emergency', $2::boolean, 'role', 'superadmin'))`,
+    [userRows[0].id, emergency],
+  );
 
   return { userId: userRows[0].id, expiresAt: userRows[0].expires_at };
 }

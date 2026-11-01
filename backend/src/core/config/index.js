@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { Ajv } from 'ajv';
-import { PROFILES, PROPERTIES, SECRET_KEYS } from './schema.js';
+import { LDAP_KEYS, PROFILES, PROPERTIES, SECRET_KEYS } from './schema.js';
 
 export class ConfigError extends Error {
   constructor(problems) {
@@ -95,6 +95,14 @@ function checkSemantics(raw, problems) {
   if (raw.APP_ORIGIN !== undefined && !isOrigin(raw.APP_ORIGIN)) {
     problems.push('APP_ORIGIN: debe ser un origen https sin ruta, por ejemplo https://enviotec.empresa.local');
   }
+  if (raw.AD_ENABLED === true) {
+    for (const key of LDAP_KEYS) {
+      if (raw[key] === undefined) problems.push(`${key}: es obligatoria cuando AD_ENABLED=true`);
+    }
+  }
+  if (raw.MANDRILL_SYSTEM_API_KEY !== undefined && raw.MAIL_FROM === undefined) {
+    problems.push('MAIL_FROM: es obligatoria cuando se define MANDRILL_SYSTEM_API_KEY');
+  }
 }
 
 function isWeakSecret(value) {
@@ -159,6 +167,28 @@ function buildConfig(raw) {
       loginPerIp: raw.RATE_LIMIT_LOGIN_PER_IP,
       loginPerAccount: raw.RATE_LIMIT_LOGIN_PER_ACCOUNT,
     };
+    config.lockout = {
+      localThreshold: raw.LOCKOUT_LOCAL_THRESHOLD,
+      localMaxMinutes: raw.LOCKOUT_LOCAL_MAX_MIN,
+      adThreshold: raw.LOCKOUT_AD_THRESHOLD,
+      adMinutes: raw.LOCKOUT_AD_MIN,
+    };
+    config.passwordReset = { ttlMinutes: raw.PASSWORD_RESET_TTL_MIN };
+    config.ad = raw.AD_ENABLED
+      ? {
+        enabled: true,
+        url: raw.LDAP_URL,
+        caCert: raw.LDAP_CA_CERT,
+        bindDn: raw.LDAP_BIND_DN,
+        bindPassword: raw.LDAP_BIND_PASSWORD,
+        baseDn: raw.LDAP_BASE_DN,
+        allowedGroupDn: raw.LDAP_ALLOWED_GROUP_DN,
+        timeoutMs: raw.LDAP_TIMEOUT_MS,
+      }
+      : { enabled: false };
+    config.mail = raw.MANDRILL_SYSTEM_API_KEY !== undefined
+      ? { enabled: true, apiKey: raw.MANDRILL_SYSTEM_API_KEY, from: raw.MAIL_FROM, fromName: raw.MAIL_FROM_NAME }
+      : { enabled: false };
   }
   if (raw.ARGON2_MEMORY_KIB !== undefined) {
     config.argon2 = {

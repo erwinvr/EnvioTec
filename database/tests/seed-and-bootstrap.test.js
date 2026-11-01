@@ -92,6 +92,11 @@ describe('bootstrap del superadmin', () => {
       );
       assert.equal(rows[0].auth_source, 'local');
       assert.equal(rows[0].role, 'superadmin');
+      const { rows: audit } = await owner.query(
+        "SELECT actor_type, result, metadata FROM audit_logs WHERE action = 'user.bootstrap' AND resource_id = $1",
+        [result.userId],
+      );
+      assert.deepEqual(audit, [{ actor_type: 'system', result: 'success', metadata: { emergency: false, role: 'superadmin' } }]);
       assert.equal(rows[0].exempt_from_expiry, false);
       assert.equal(rows[0].valid_90, true);
       assert.match(rows[0].password_hash, /^\$argon2id\$v=19\$/);

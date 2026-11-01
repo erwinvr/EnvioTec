@@ -49,6 +49,7 @@ export function errorHandler(error, request, reply) {
   } else {
     request.log.info({ errorCode: appError.code, statusCode: appError.statusCode }, 'request rejected');
   }
+  if (appError.retryAfterSeconds) reply.header('Retry-After', String(appError.retryAfterSeconds));
   reply.code(appError.statusCode).send(errorBody(appError, request.id));
 }
 

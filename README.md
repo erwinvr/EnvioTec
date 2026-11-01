@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 2 (base de datos y RBAC). Todavía no hay login (Fase 3) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 3 (autenticación): API de login local y de AD, MFA, CSRF, sesiones y recuperación de contraseña. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -57,7 +57,7 @@ docker compose run --rm -it tools node scripts/bootstrap-admin.js       # supera
 docker compose run --rm -it tools node scripts/bootstrap-admin.js --emergency   # cuenta de emergencia
 ```
 
-El bootstrap no tiene credenciales por defecto: pide usuario, email, nombre, área y contraseña (sin mostrarla), y la valida con la política de contraseñas. Solo crea el superadmin si todavía no existe uno. Otros comandos de migración: `node scripts/migrate.js down [n|all]` y `node scripts/migrate.js verify`.
+El bootstrap no tiene credenciales por defecto: pide usuario, email, nombre, área y contraseña (sin mostrarla), y la valida con la política de contraseñas. Solo crea el superadmin si todavía no existe uno, y queda auditado. En el primer login el superadmin debe configurar el MFA (`POST /api/v1/auth/mfa/enroll/start` y `/confirm`). Otros comandos de migración: `node scripts/migrate.js down [n|all]` y `node scripts/migrate.js verify`.
 
 Abrir `https://localhost` en el navegador (aceptar el certificado autofirmado o importar `secrets/tls_cert`).
 
@@ -99,7 +99,10 @@ La lista completa, con valores de ejemplo, está en [.env.example](.env.example)
 | `DATA_ENCRYPTION_KEY(_FILE)` | Sí (API) | 32 bytes aleatorios en base64 |
 | `TRUST_PROXY` | Sí (API) | IP o CIDR de nginx; nunca un comodín |
 | `APP_ORIGIN` | Sí (API) | Origen https de la aplicación |
-| `SESSION_*`, `ARGON2_*`, `RATE_LIMIT_*` | No | Con valores por defecto seguros |
+| `SESSION_*`, `ARGON2_*`, `RATE_LIMIT_*`, `LOCKOUT_*`, `PASSWORD_RESET_TTL_MIN` | No | Con valores por defecto seguros |
+| `AD_ENABLED` | No | `true` habilita el login con AD (por defecto `false`) y exige las `LDAP_*` |
+| `LDAP_URL`, `LDAP_CA_CERT(_FILE)`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD(_FILE)`, `LDAP_BASE_DN`, `LDAP_ALLOWED_GROUP_DN` | Con AD | Solo `ldaps://`; CA interna; cuenta de servicio de solo lectura; grupo habilitado |
+| `MANDRILL_SYSTEM_API_KEY(_FILE)`, `MAIL_FROM` | No | Correo del sistema (recuperación de contraseña); sin la key el correo queda deshabilitado |
 
 ## Verificación (`npm run check`)
 
@@ -124,8 +127,8 @@ No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proye
 
 ## Tests
 
-- `backend/tests/unit`: configuración, logger, errores, health con dependencias simuladas.
-- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito) y estados de sesión inválidos; usuario de Redis.
+- `backend/tests/unit`: configuración, logger, errores, health, contraseñas, TOTP (vectores de los RFC 4226 y 6238), cifrado, CSRF, etapas de sesión, bloqueo, rate limiter, proveedor de AD y correo del sistema.
+- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019).
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
 - `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
 

@@ -23,11 +23,36 @@ export const PROPERTIES = {
   ARGON2_PARALLELISM: { type: 'integer', minimum: 1, maximum: 16, default: 1 },
   RATE_LIMIT_LOGIN_PER_IP: { type: 'integer', minimum: 1, maximum: 1000, default: 20 },
   RATE_LIMIT_LOGIN_PER_ACCOUNT: { type: 'integer', minimum: 1, maximum: 100, default: 5 },
+  // Progressive lockout of local accounts: from the threshold on, each failure
+  // doubles the lock (1, 2, 4... minutes) up to the maximum.
+  LOCKOUT_LOCAL_THRESHOLD: { type: 'integer', minimum: 3, maximum: 20, default: 5 },
+  LOCKOUT_LOCAL_MAX_MIN: { type: 'integer', minimum: 1, maximum: 1440, default: 60 },
+  // AD locks at 3 failures and resets its counter after 15 minutes: EnvioTec
+  // stops before that (ADR-006).
+  LOCKOUT_AD_THRESHOLD: { type: 'integer', minimum: 1, maximum: 2, default: 2 },
+  LOCKOUT_AD_MIN: { type: 'integer', minimum: 15, maximum: 1440, default: 15 },
+  PASSWORD_RESET_TTL_MIN: { type: 'integer', minimum: 15, maximum: 30, default: 30 },
+  AD_ENABLED: { type: 'boolean', default: false },
+  LDAP_URL: { type: 'string', pattern: '^ldaps://[^/]+$' },
+  LDAP_CA_CERT: { type: 'string', pattern: '-----BEGIN CERTIFICATE-----' },
+  LDAP_BIND_DN: { type: 'string', minLength: 3, maxLength: 500 },
+  LDAP_BIND_PASSWORD: { type: 'string', minLength: 1 },
+  LDAP_BASE_DN: { type: 'string', minLength: 3, maxLength: 500 },
+  LDAP_ALLOWED_GROUP_DN: { type: 'string', minLength: 3, maxLength: 500 },
+  LDAP_TIMEOUT_MS: { type: 'integer', minimum: 1000, maximum: 30000, default: 5000 },
+  MANDRILL_SYSTEM_API_KEY: { type: 'string', minLength: 10, maxLength: 200 },
+  MAIL_FROM: { type: 'string', pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$', maxLength: 254 },
+  MAIL_FROM_NAME: { type: 'string', minLength: 1, maxLength: 100, default: 'EnvioTec' },
 };
+
+// Variables required when AD_ENABLED is true.
+export const LDAP_KEYS = ['LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
+  'LDAP_ALLOWED_GROUP_DN'];
 
 // Variables that may come from a Docker secret file (<NAME>_FILE).
 export const SECRET_KEYS = new Set([
   'DATABASE_URL', 'MIGRATION_DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY',
+  'LDAP_BIND_PASSWORD', 'LDAP_CA_CERT', 'MANDRILL_SYSTEM_API_KEY',
 ]);
 
 // Each process receives only the variables it needs (least privilege).
@@ -39,6 +64,10 @@ export const PROFILES = {
       'SESSION_IDLE_TIMEOUT_MIN', 'SESSION_ABSOLUTE_TIMEOUT_MIN',
       'ARGON2_MEMORY_KIB', 'ARGON2_ITERATIONS', 'ARGON2_PARALLELISM',
       'RATE_LIMIT_LOGIN_PER_IP', 'RATE_LIMIT_LOGIN_PER_ACCOUNT',
+      'LOCKOUT_LOCAL_THRESHOLD', 'LOCKOUT_LOCAL_MAX_MIN', 'LOCKOUT_AD_THRESHOLD', 'LOCKOUT_AD_MIN',
+      'PASSWORD_RESET_TTL_MIN', 'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD',
+      'LDAP_BASE_DN', 'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM',
+      'MAIL_FROM_NAME',
     ],
   },
   worker: {

@@ -1,16 +1,309 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.1.0
+  version: 0.3.0
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
     Cada respuesta incluye `X-Request-Id` (generado por el servidor) y `Cache-Control: no-store`.
+
+    **CSRF:** todo POST, PUT, PATCH y DELETE debe llevar el header `Origin` de la aplicación; con sesión,
+    también `X-CSRF-Token` (lo devuelven el login y `GET /api/v1/auth/me`). Sin ellos responde 403 `CSRF_REJECTED`.
+
+    **Etapas de la sesión (ADR-018):** `mfa_verify`, `password_change`, `mfa_enroll` y `full`. Fuera de las etapas que
+    acepta cada ruta (`x-enviotec-stages`, por defecto `full`), responde 403 `AUTH_STEP_REQUIRED`.
+
+    `x-enviotec-authenticated: true` indica una ruta sobre la propia cuenta: requiere sesión, no un permiso.
 servers:
   - url: /
 security:
   - session: []
 paths:
+  /api/v1/auth/login:
+    post:
+      summary: Iniciar sesión (cuenta local o de AD)
+      description: |
+        Mismo error (401 `INVALID_CREDENTIALS`) para usuario inexistente, contraseña incorrecta y cuenta bloqueada,
+        desactivada o vencida. Rate limiting por IP y por cuenta (429 con `Retry-After`). Crea la sesión en la cookie
+        `__Host-enviotec_session` y revoca la que traía la petición. Las cuentas de AD se crean en el primer login.
+      operationId: login
+      security: []
+      x-enviotec-public: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username: { type: string, pattern: '^[A-Za-z0-9._-]{3,64}$' }
+                password: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '200': { $ref: '#/components/responses/SessionState' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/logout:
+    post:
+      summary: Cerrar la sesión (se revoca en el servidor)
+      operationId: logout
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [mfa_verify, password_change, mfa_enroll, full]
+      responses:
+        '200': { $ref: '#/components/responses/Empty' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/auth/me:
+    get:
+      summary: Estado de la sesión, usuario, permisos efectivos y token CSRF
+      description: Los permisos solo se devuelven en la etapa `full`.
+      operationId: me
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [mfa_verify, password_change, mfa_enroll, full]
+      responses:
+        '200': { $ref: '#/components/responses/SessionState' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: Verificar el MFA con un código TOTP o un código de recuperación
+      description: Rota el token de sesión. Cinco códigos incorrectos en una sesión la revocan.
+      operationId: mfaVerify
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [mfa_verify]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              oneOf: [{ required: [code] }, { required: [recoveryCode] }]
+              properties:
+                code: { type: string, pattern: '^[0-9]{6}$' }
+                recoveryCode: { type: string, example: ABCDE-FGHIJ }
+      responses:
+        '200': { $ref: '#/components/responses/SessionState' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/mfa/enroll/start:
+    post:
+      summary: Iniciar la configuración del MFA
+      description: |
+        Devuelve el secreto y la URI otpauth (para el QR). Las cuentas de AD necesitan el código de enrolamiento
+        que emite un administrador. Fuera del primer login exige re-autenticación.
+      operationId: mfaEnrollStart
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [mfa_enroll, full]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enrollmentCode: { type: string, example: ABCD-EFGH-IJKL-MNOP }
+      responses:
+        '200':
+          description: Secreto pendiente de confirmación (10 minutos)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      secret: { type: string }
+                      otpauthUri: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/mfa/enroll/confirm:
+    post:
+      summary: Confirmar el MFA con un código; devuelve 10 códigos de recuperación (se muestran una sola vez)
+      operationId: mfaEnrollConfirm
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [mfa_enroll, full]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200':
+          description: MFA configurado; el token de sesión se rota
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      recoveryCodes: { type: array, items: { type: string } }
+                      session: { $ref: '#/components/schemas/SessionState' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password/change:
+    post:
+      summary: Cambiar la propia contraseña (solo cuentas locales)
+      description: Revoca las demás sesiones y rota la actual.
+      operationId: passwordChange
+      x-enviotec-authenticated: true
+      x-enviotec-stages: [password_change, full]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, description: 12 a 128 caracteres; se rechazan contraseñas comunes }
+      responses:
+        '200': { $ref: '#/components/responses/SessionState' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password/forgot:
+    post:
+      summary: Pedir un enlace de recuperación (solo cuentas locales)
+      description: Responde 202 igual exista o no la cuenta.
+      operationId: passwordForgot
+      security: []
+      x-enviotec-public: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+      responses:
+        '202': { $ref: '#/components/responses/Empty' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password/reset:
+    post:
+      summary: Definir una nueva contraseña con el token del correo (un solo uso, 30 minutos)
+      description: Revoca todas las sesiones del usuario.
+      operationId: passwordReset
+      security: []
+      x-enviotec-public: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token, newPassword]
+              properties:
+                token: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+                newPassword: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Empty' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/reauth:
+    post:
+      summary: Re-autenticarse con la contraseña o un código TOTP (vale 5 minutos)
+      operationId: reauth
+      x-enviotec-authenticated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              oneOf: [{ required: [password] }, { required: [code] }]
+              properties:
+                password: { type: string }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { $ref: '#/components/responses/Empty' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/sessions:
+    get:
+      summary: Sesiones activas del propio usuario
+      operationId: listOwnSessions
+      x-enviotec-authenticated: true
+      responses:
+        '200':
+          description: Sesiones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, description: Hash SHA-256 del token en hexadecimal }
+                        createdAt: { type: string, format: date-time }
+                        lastSeenAt: { type: string, format: date-time }
+                        expiresAt: { type: string, format: date-time }
+                        ip: { type: [string, 'null'] }
+                        userAgent: { type: [string, 'null'] }
+                        current: { type: boolean }
+  /api/v1/auth/sessions/{id}:
+    delete:
+      summary: Cerrar una sesión propia
+      description: Una sesión de otro usuario responde 404, igual que una inexistente.
+      operationId: revokeOwnSession
+      x-enviotec-authenticated: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+      responses:
+        '200': { $ref: '#/components/responses/Empty' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/users/{id}/mfa/reset:
+    post:
+      summary: Reiniciar el MFA de un usuario (revoca sus sesiones)
+      description: |
+        Exige re-autenticación (403 `REAUTH_REQUIRED`). Para cuentas de AD emite además el código de enrolamiento,
+        que se muestra una sola vez. Nadie reinicia su propio MFA (409).
+      operationId: resetUserMfa
+      x-enviotec-permission: users.reset_mfa
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: MFA reiniciado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      enrollmentCode: { type: [string, 'null'] }
+                      expiresAt: { type: [string, 'null'], format: date-time }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/permissions:
     get:
       summary: Catálogo de permisos
@@ -69,6 +362,30 @@ components:
       name: __Host-enviotec_session
       description: Token de sesión opaco (ADR-002). En la base solo se guarda su hash SHA-256.
   responses:
+    SessionState:
+      description: Estado de la sesión
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: true }
+              data: { $ref: '#/components/schemas/SessionState' }
+    Empty:
+      description: Operación realizada
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, const: true }
+              data: { type: object, additionalProperties: false }
+    Error:
+      description: Error con el formato estándar
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthenticated:
       description: Sin sesión válida (ausente, revocada, vencida o de un usuario inactivo)
       content:
@@ -82,6 +399,27 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    SessionState:
+      type: object
+      additionalProperties: false
+      required: [stage, csrfToken, sessionExpiresAt, mfaRequired, user, permissions]
+      properties:
+        stage: { type: string, enum: [mfa_verify, password_change, mfa_enroll, full] }
+        csrfToken: { type: string, description: Enviar en X-CSRF-Token }
+        sessionExpiresAt: { type: string, format: date-time }
+        mfaRequired: { type: boolean }
+        user:
+          type: object
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            username: { type: string }
+            email: { type: string }
+            displayName: { type: string }
+            authSource: { type: string, enum: [local, ad] }
+            areaId: { type: [string, 'null'], format: uuid }
+            mfaEnabled: { type: boolean }
+        permissions: { type: array, items: { type: string } }
     PermissionList:
       type: object
       additionalProperties: false
@@ -139,9 +477,9 @@ components:
           properties:
             code:
               type: string
-              enum: [VALIDATION_ERROR, BAD_REQUEST, AUTHENTICATION_REQUIRED, FORBIDDEN, NOT_FOUND,
-                     CONFLICT, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED,
-                     INTERNAL_ERROR, SERVICE_UNAVAILABLE]
+              enum: [VALIDATION_ERROR, BAD_REQUEST, AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS, FORBIDDEN,
+                     AUTH_STEP_REQUIRED, REAUTH_REQUIRED, CSRF_REJECTED, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE,
+                     UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED, INTERNAL_ERROR, SERVICE_UNAVAILABLE]
             message: { type: string }
             requestId: { type: string, format: uuid }
             details:

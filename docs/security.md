@@ -153,6 +153,9 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 | R12 | Particiones mensuales con retención perpetua | El worker crea particiones con meses de anticipación; alerta si falta alguna | Abierto (Fase 2/8) |
 | R13 | Entregabilidad: SPF, DKIM y DMARC del subdominio | Coordinar con quien administra el DNS y la cuenta de Mailchimp | Abierto (fuera del código) |
 | R14 | Herramientas de `npm run check` (Trivy, gitleaks) | Se ejecutan como contenedores; requiere Docker donde corra Jenkins | Abierto (Fase 1) |
+| R15 | Compatibilidad del proveedor LDAPS con el AD real (TLS con la CA interna, atributos, grupos anidados): Samba AD no se puede provisionar en el host de desarrollo | Directorio simulado en los tests (ADR-019); validación con el AD de la organización cuando estén sus datos | Abierto (Fase 3) |
+| R16 | Recuperación por correo sin API key de sistema de Mandrill: el correo queda deshabilitado y se registra una advertencia | Configurar `MANDRILL_SYSTEM_API_KEY` y `MAIL_FROM` del subdominio verificado; probar en el spike 0.5 | Abierto (Fase 3) |
+| R17 | Red hacia el controlador de dominio en producción: las redes del backend son internas | Red dedicada con firewall solo hacia el controlador de dominio (puerto 636), definida en el runbook | Abierto (Fase 9) |
 
 ## 7. Revisión de seguridad por fase
 
@@ -220,3 +223,36 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - `app_owner` puede desactivar triggers (`ALTER TABLE … DISABLE TRIGGER`) por ser dueño de las tablas. Se acepta: solo lo usan las migraciones, y la cadena de hash de la Fase 4 detecta cualquier alteración posterior.
 - Trivy encontró 6 vulnerabilidades altas (`brace-expansion`, `undici`) en el npm que trae la imagen base de Node, dentro de la imagen `tools`. Se eliminó npm de `tools` (como ya se hacía en `runtime`) y los scripts se ejecutan con `node`.
 - `npm audit` informa avisos moderados sin corrección compatible: `minimatch` (dependencia de ESLint, solo desarrollo) y `glob` (dependencia de `node-pg-migrate`, que solo lista el directorio fijo de migraciones, sin entrada del usuario). No llegan al umbral alto de A11; se revisan en la Fase 9.
+
+### Fase 3 — Autenticación (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A5 (sesión) | Token nuevo en cada login y al completar o configurar el MFA, al cambiar la contraseña; el login revoca la sesión que traía la cookie (session fixation); cookie `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict`; logout revoca en el servidor; vencimiento por inactividad y absoluto, revocado y auditado | `integration/auth-login.test.js`, `authorization-matrix.test.js`, `unit/auth-core.test.js` |
+| A8 (CSRF) | Origin obligatorio en todo método que modifica estado, también en rutas públicas; token CSRF (HMAC del hash de la sesión) en `X-CSRF-Token` | `route-inventory.test.js`, `auth-login.test.js`, `unit/auth-core.test.js` |
+| A5 (enumeración) | Mismo código, mensaje y tiempo similar con usuario inexistente (hash ficticio), contraseña incorrecta, cuenta bloqueada, desactivada o vencida; recuperación con la misma respuesta 202 y correo enviado después de responder | `auth-login.test.js`, `auth-mfa-password.test.js` |
+| A5 (fuerza bruta) | Rate limiting en Redis por IP y por cuenta (429 + `Retry-After`); un intento a la vez por cuenta; bloqueo progresivo de cuentas locales (5 fallos, 1, 2, 4… minutos hasta 60) | `auth-login.test.js`, `unit/auth-core.test.js` |
+| ADR-006 (AD) | LDAPS con la CA interna, cuenta de servicio, bind con el DN del usuario, filtros escapados (RFC 4515), contraseña vacía rechazada; estado de AD revisado en el login y en la re-autenticación con revocación de sesiones; JIT por `objectGUID`; área por `department`; roles de negocio por grupo; corte a los 2 intentos durante 15 minutos sin que AD llegue a 3; colisiones rechazadas y auditadas; AD caído responde 503 y no cuenta como fallo | `unit/ad-provider.test.js`, `integration/auth-ad.test.js` |
+| Parte B (origen único) | Una cuenta local nunca se autentica contra AD aunque exista el mismo usuario en AD; una cuenta de AD no entra con AD deshabilitado | `auth-ad.test.js`, `auth-login.test.js` |
+| T7 / Parte B (MFA) | TOTP (RFC 6238, verificado con los vectores del RFC) con secreto cifrado AES-256-GCM ligado al usuario; códigos sin reutilización (último paso guardado); 10 códigos de recuperación de un solo uso con hash; 5 fallos revocan la sesión; obligatorio con permisos administrativos, `campaigns.submit` o `campaigns.approve`; sin MFA verificado la sesión no usa sus permisos (ADR-018) | `auth-mfa-password.test.js`, `unit/auth-core.test.js`, `authorization-matrix.test.js` |
+| ADR-006 (enrolamiento AD) | Código de enrolamiento de un solo uso, emitido con `users.reset_mfa` y re-autenticación, guardado como hash, con vigencia del parámetro de sistema y 5 intentos; nadie reinicia su propio MFA; el reinicio revoca las sesiones del usuario | `auth-mfa-password.test.js`, `unit/auth-core.test.js` |
+| A5 (re-autenticación) | Contraseña o MFA de los últimos 5 minutos antes de reiniciar el MFA de otro y de configurar el MFA fuera del primer login | `auth-mfa-password.test.js`, `unit/auth-core.test.js` |
+| A5 (contraseñas) | Cambio con la contraseña actual, política del baseline y revocación de las demás sesiones; contraseña inicial obliga a cambiarla; recuperación por correo con token de 256 bits, hash en base, un solo uso, 30 minutos (CHECK en la base), enlace en el fragmento de la URL, sin seguimiento de clics de Mandrill, revocación de todas las sesiones | `auth-mfa-password.test.js`, `unit/mailer.test.js` |
+| A7 / T15 | Cadena de hash calculada en la base (`append_audit_log`, advisory lock, `audit_log_canonical`); cada acción y su evento en la misma transacción; todo 403 auditado; metadata sin campos sensibles | `database/tests/runtime-privileges.test.js`, `auth-mfa-password.test.js`, `authorization-matrix.test.js` |
+| A6 (IDOR) | Las sesiones propias se listan y cierran solo con `user_id` en el WHERE: la sesión de otro usuario responde 404 | `auth-login.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Script de verificación de la cadena de auditoría, consulta, exportación y alerta por uso de la cuenta de emergencia (Fase 4).
+- Revisión de AD cada 15 minutos por el worker, desbloqueo manual, alta de usuarios locales con contraseña inicial (Fase 5).
+- Validación contra el AD real (R15), API key de sistema de Mandrill (R16) y red hacia el controlador de dominio (R17).
+- Pantallas de login, MFA (QR a partir de `otpauthUri`) y recuperación (Fase 7).
+
+**Hallazgos de la fase:**
+
+- El plan aprobado preveía un Samba AD DC para los tests; no se puede provisionar en este host (ADR-019). Se reemplazó por un directorio simulado y queda R15.
+- La columna `sessions.must_change_password_only` prevista en el plan no hizo falta: la etapa se calcula desde `users.must_change_password` (ADR-018).
+- Los usuarios de los tests no se pueden borrar al terminar porque la auditoría los referencia con `ON DELETE RESTRICT`; los fixtures se marcan como borrados. Es el comportamiento esperado de la auditoría append-only.
+- Durante las pruebas, un fixture con un token de recuperación de más de 30 minutos fue rechazado por el CHECK de la base: el control funciona también fuera de la aplicación.

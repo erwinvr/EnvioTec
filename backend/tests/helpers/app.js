@@ -37,7 +37,55 @@ export const healthyChecks = { database: async () => {}, redis: async () => {} }
 // is ever valid. Tests with a real database live in tests/integration.
 export const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) };
 
-export async function buildTestApp({ checks = healthyChecks, extraPlugins = [], logger, db = emptyDb } = {}) {
+// In-memory stand-in for the few Redis commands the rate limiter uses.
+export function memoryRedis() {
+  const values = new Map();
+  const expiries = new Map();
+  const alive = (key) => {
+    if (expiries.has(key) && expiries.get(key) <= Date.now()) {
+      values.delete(key);
+      expiries.delete(key);
+    }
+    return values.has(key);
+  };
+  return {
+    async incr(key) {
+      const next = (alive(key) ? Number(values.get(key)) : 0) + 1;
+      values.set(key, String(next));
+      return next;
+    },
+    async expire(key, seconds, mode) {
+      if (!alive(key) || (mode === 'NX' && expiries.has(key))) return 0;
+      expiries.set(key, Date.now() + seconds * 1000);
+      return 1;
+    },
+    async pttl(key) {
+      if (!alive(key)) return -2;
+      return expiries.has(key) ? expiries.get(key) - Date.now() : -1;
+    },
+    async get(key) {
+      return alive(key) ? values.get(key) : null;
+    },
+    async set(key, value, unit, amount, mode) {
+      if (mode === 'NX' && alive(key)) return null;
+      values.set(key, value);
+      expiries.set(key, Date.now() + (unit === 'PX' ? amount : amount * 1000));
+      return 'OK';
+    },
+    async del(key) {
+      const existed = alive(key);
+      values.delete(key);
+      expiries.delete(key);
+      return existed ? 1 : 0;
+    },
+  };
+}
+
+export const ORIGIN = 'https://enviotec.test';
+
+export async function buildTestApp({
+  checks = healthyChecks, extraPlugins = [], logger, db = emptyDb, redis = memoryRedis(), mailer,
+} = {}) {
   const config = loadConfig(validEnv());
-  return buildApp({ config, logger: logger ?? pino({ level: 'silent' }), db, checks, extraPlugins });
+  return buildApp({ config, logger: logger ?? pino({ level: 'silent' }), db, redis, checks, mailer, extraPlugins });
 }

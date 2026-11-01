@@ -57,6 +57,9 @@ services:
       DATA_ENCRYPTION_KEY_FILE: /run/secrets/data_encryption_key
       TRUST_PROXY: ${NGINX_IP:-172.31.10.10}
       APP_ORIGIN: ${APP_ORIGIN:-https://localhost}
+      AD_ENABLED: ${AD_ENABLED:-false}
+      # fetch() (system mail through Mandrill) honors HTTPS_PROXY only with this flag.
+      NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,redis,localhost,127.0.0.1
     secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key]
@@ -88,6 +91,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_URL_FILE: /run/secrets/redis_url_worker
+      NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,redis,localhost,127.0.0.1
     secrets: [database_url, redis_url_worker]

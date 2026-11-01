@@ -12,6 +12,8 @@ import { buildApp } from '../../src/app.js';
 import { generateSessionToken, hashToken, SESSION_COOKIE } from '../../src/core/auth/session-token.js';
 import { loadConfig } from '../../src/core/config/index.js';
 import { createPool } from '../../src/core/db/pool.js';
+import { createRedisClient } from '../../src/core/redis/client.js';
+import { deriveCsrfToken } from '../../src/core/security/csrf.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
 const PREFIX = `matrix_${randomBytes(4).toString('hex')}`;
@@ -19,26 +21,34 @@ const PREFIX = `matrix_${randomBytes(4).toString('hex')}`;
 // One entry per protected route. A new protected route without an entry here
 // makes the matrix fail, so no route escapes it.
 const MATRIX_CASES = {
-  'GET /api/v1/permissions': { url: '/api/v1/permissions', success: 200 },
+  'GET /api/v1/permissions': { url: () => '/api/v1/permissions', success: 200 },
+  'POST /api/v1/users/:id/mfa/reset': { url: (f) => `/api/v1/users/${f.targetId}/mfa/reset`, success: 200 },
 };
 
 describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/check.sh)' }, () => {
   let app;
   let pool;
+  let redis;
   let owner;
+  let config;
   const tokens = {};
 
-  async function createUser(name, { roleId, status = 'active', deleted = false, lockedMinutes = 0, expiresInMinutes = 43200 } = {}) {
+  // Users with every route permission hold administrative ones, so they need
+  // MFA: the fixture marks it as configured and the session as verified.
+  async function createUser(name, {
+    roleId, status = 'active', deleted = false, lockedMinutes = 0, expiresInMinutes = 43200, mfa = Boolean(roleId),
+  } = {}) {
     const { rows } = await owner.query(
       `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, status, deleted_at,
-                          locked_until, expires_at)
+                          locked_until, expires_at, mfa_secret_encrypted, mfa_enabled_at)
        VALUES ($1, $2, $8, 'local', '$argon2id$v=19$m=19456,t=2,p=1$x$y', $3, $4,
                CASE WHEN $5 THEN now() END,
                CASE WHEN $6 > 0 THEN now() + make_interval(mins => $6) END,
-               now() + make_interval(mins => $7))
+               now() + make_interval(mins => $7),
+               CASE WHEN $9 THEN '\\x00'::bytea END, CASE WHEN $9 THEN now() END)
        RETURNING id`,
       [`${PREFIX}.${name}`, `${PREFIX}.${name}@example.test`, fixtures.areaId, status, deleted, lockedMinutes,
-        expiresInMinutes, `Usuario ${name}`],
+        expiresInMinutes, `Usuario ${name}`, mfa],
     );
     if (roleId) await owner.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [rows[0].id, roleId]);
     return rows[0].id;
@@ -47,8 +57,9 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   async function createSession(name, userId, { revoked = false, idleMinutes = 0 } = {}) {
     const token = generateSessionToken();
     await owner.query(
-      `INSERT INTO sessions (id, user_id, expires_at, revoked_at, last_seen_at)
-       VALUES ($1, $2, now() + interval '8 hours', CASE WHEN $3 THEN now() END, now() - make_interval(mins => $4))`,
+      `INSERT INTO sessions (id, user_id, expires_at, revoked_at, last_seen_at, mfa_verified_at, reauth_at)
+       VALUES ($1, $2, now() + interval '8 hours', CASE WHEN $3 THEN now() END, now() - make_interval(mins => $4),
+               now(), now())`,
       [hashToken(token), userId, revoked, idleMinutes],
     );
     tokens[name] = token;
@@ -59,10 +70,12 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   before(async () => {
     owner = new pg.Client({ connectionString: readFileSync(process.env.MIGRATION_DATABASE_URL_FILE, 'utf8').trim() });
     await owner.connect();
-    const config = loadConfig(process.env);
+    config = loadConfig(process.env);
     const logger = pino({ level: 'silent' });
     pool = createPool(config.database, logger, 'enviotec-tests');
-    app = await buildApp({ config, logger, db: pool, checks: { database: async () => {} } });
+    redis = createRedisClient(config.redis, logger);
+    await redis.connect();
+    app = await buildApp({ config, logger, db: pool, redis, checks: { database: async () => {} } });
 
     const { rows: area } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [PREFIX]);
     fixtures.areaId = area[0].id;
@@ -74,6 +87,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       [fixtures.roleId, routePermissions],
     );
 
+    fixtures.targetId = await createUser('target', { mfa: false });
     const allowed = await createUser('allowed', { roleId: fixtures.roleId });
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));
@@ -95,24 +109,35 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   after(async () => {
     await app?.close();
     await pool?.end();
+    await redis?.quit();
     if (owner) {
-      await owner.query('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE username LIKE $1)', [`${PREFIX}.%`]);
-      await owner.query('DELETE FROM user_roles WHERE role_id = $1 OR user_id IN (SELECT id FROM users WHERE username LIKE $2)',
-        [fixtures.roleId, `${PREFIX}.%`]);
+      // Audited users cannot be deleted (audit_logs references them with ON
+      // DELETE RESTRICT): fixtures are soft-deleted and lose their access.
+      await owner.query(
+        `UPDATE sessions SET revoked_at = now(), revoked_reason = 'test_cleanup'
+          WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE username LIKE $1)`,
+        [`${PREFIX}.%`],
+      );
+      await owner.query('DELETE FROM user_roles WHERE role_id = $1', [fixtures.roleId]);
       await owner.query('DELETE FROM role_permissions WHERE role_id = $1', [fixtures.roleId]);
-      await owner.query('DELETE FROM users WHERE username LIKE $1', [`${PREFIX}.%`]);
-      await owner.query('DELETE FROM roles WHERE id = $1', [fixtures.roleId]);
-      await owner.query('DELETE FROM areas WHERE id = $1', [fixtures.areaId]);
+      await owner.query("UPDATE users SET deleted_at = now(), status = 'disabled' WHERE username LIKE $1", [`${PREFIX}.%`]);
       await owner.end();
     }
   });
 
-  const request = (method, url, token) => app.inject({
-    method, url, headers: token ? { cookie: `${SESSION_COOKIE}=${token}` } : {},
-  });
+  // State-changing requests carry what the browser would send: Origin and
+  // the session's CSRF token.
+  const request = (method, url, token) => {
+    const headers = { origin: config.security.appOrigin };
+    if (token) {
+      headers.cookie = `${SESSION_COOKIE}=${token}`;
+      headers['x-csrf-token'] = deriveCsrfToken(config.security.csrfSecret, hashToken(token));
+    }
+    return app.inject({ method, url, headers });
+  };
 
   it('cada ruta protegida tiene su caso en la matriz', () => {
-    const protectedRoutes = app.routeInventory.filter((route) => !route.public && route.method !== 'HEAD');
+    const protectedRoutes = app.routeInventory.filter((route) => route.permission !== null && route.method !== 'HEAD');
     for (const route of protectedRoutes) {
       assert.ok(MATRIX_CASES[`${route.method} ${route.url}`], `falta el caso de matriz para ${route.method} ${route.url}`);
     }
@@ -122,18 +147,24 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const [method] = route.split(' ');
 
     it(`${route}: sin sesión -> 401`, async () => {
-      const res = await request(method, testCase.url);
+      const res = await request(method, testCase.url(fixtures));
       assert.equal(res.statusCode, 401);
     });
 
     it(`${route}: sesión sin el permiso -> 403`, async () => {
-      const res = await request(method, testCase.url, tokens.withoutPermission);
+      const res = await request(method, testCase.url(fixtures), tokens.withoutPermission);
       assert.equal(res.statusCode, 403);
       assert.equal(res.json().error.code, 'FORBIDDEN');
+      const { rows } = await owner.query(
+        `SELECT 1 FROM audit_logs WHERE action = 'authorization.deny' AND result = 'denied'
+            AND resource_id = $1 AND actor_session_id = $2`,
+        [route, hashToken(tokens.withoutPermission)],
+      );
+      assert.ok(rows.length > 0, 'todo 403 queda auditado (A7)');
     });
 
     it(`${route}: sesión con el permiso -> ${testCase.success}`, async () => {
-      const res = await request(method, testCase.url, tokens.allowed);
+      const res = await request(method, testCase.url(fixtures), tokens.allowed);
       assert.equal(res.statusCode, testCase.success);
     });
   }
@@ -152,6 +183,36 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       assert.equal(res.statusCode, 401);
     });
   }
+
+  it('toda ruta con sesión (permiso o authenticated) responde 401 sin sesión', async () => {
+    const routes = app.routeInventory.filter((route) => !route.public && route.method !== 'HEAD');
+    for (const route of routes) {
+      const url = route.url.replace(':id', route.url.includes('sessions') ? 'a'.repeat(64) : fixtures.targetId);
+      const res = await request(route.method, url);
+      assert.equal(res.statusCode, 401, `${route.method} ${route.url}`);
+    }
+  });
+
+  it('una sesión con MFA pendiente no usa sus permisos (AUTH_STEP_REQUIRED)', async () => {
+    const pending = generateSessionToken();
+    await owner.query('INSERT INTO sessions (id, user_id, expires_at) SELECT $1, id, now() + interval \'1 hour\' FROM users WHERE username = $2',
+      [hashToken(pending), `${PREFIX}.allowed`]);
+    const res = await request('GET', '/api/v1/permissions', pending);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().error.code, 'AUTH_STEP_REQUIRED');
+    assert.deepEqual(res.json().error.details, [{ field: 'stage', code: 'mfa_verify' }]);
+  });
+
+  it('una sesión vencida por inactividad queda revocada y auditada', async () => {
+    await request('GET', '/api/v1/permissions', tokens.idle);
+    const { rows } = await owner.query(
+      `SELECT s.revoked_reason, (SELECT count(*) FROM audit_logs a WHERE a.action = 'auth.session_expire' AND a.actor_session_id = s.id) AS audited
+         FROM sessions s WHERE s.id = $1`,
+      [hashToken(tokens.idle)],
+    );
+    assert.equal(rows[0].revoked_reason, 'expired');
+    assert.equal(Number(rows[0].audited), 1);
+  });
 
   it('un token desconocido con formato válido responde 401', async () => {
     const res = await request('GET', '/api/v1/permissions', generateSessionToken());

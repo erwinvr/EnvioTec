@@ -195,7 +195,7 @@ Herramientas fuera de npm (contenedores): qpdf (Apache-2.0), ClamAV (GPL-2.0, se
 | 1. Base | Estructura, compose (nginx, backend, worker vacío, postgres, redis, egress-proxy), redes, config validada, logger, errores, headers, health checks, `npm run check` |
 | 2. BD y RBAC | Migraciones del núcleo con `auth_source`, `areas`, `system_settings`; catálogo de permisos completo; roles; triggers de roles administrativos; bootstrap de superadmin y cuenta de emergencia; inventario de rutas; filtro por área en repositories |
 | 3. Autenticación | Proveedor local y LDAPS, JIT, MFA y enrolamiento, re-autenticación, recuperación por correo (API key de sistema), verificación de `expires_at`, bloqueo 2 intentos / 15 minutos para AD |
-| 4. Auditoría | A7 con `actor_type`, alerta de cuenta de emergencia, verificación de la cadena |
+| 4. Auditoría | Script de verificación de la cadena, consulta y exportación, alerta de cuenta de emergencia (la escritura encadenada y la auditoría de 403 se adelantaron a la Fase 3, ADR-018) |
 | 5. Usuarios | Alta y edición de locales con vigencia, renovación, revisión de cuentas locales, trabajos de vigencia diaria y revisión de AD cada 15 minutos, áreas |
 | 6. Roles y permisos | A6 más equivalencias de grupos de AD a roles de negocio |
 | 7. Frontend del núcleo | C1 con i18n español e inglés |

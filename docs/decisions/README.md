@@ -21,3 +21,5 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [015](015-squid-como-proxy-de-egreso.md) | Squid como proxy de egreso | Aceptado |
 | [016](016-argon2-nativo-y-politica-de-contrasenas.md) | Argon2id nativo y política de contraseñas | Aceptado |
 | [017](017-imagen-tools-y-migraciones.md) | Imagen tools para migraciones, seeds y bootstrap | Aceptado |
+| [018](018-etapas-de-sesion-y-rutas-autenticadas.md) | Etapas de la sesión, rutas autenticadas y auditoría desde la Fase 3 | Aceptado |
+| [019](019-pruebas-de-ad-con-directorio-simulado.md) | Pruebas de AD con directorio simulado | Aceptado |
