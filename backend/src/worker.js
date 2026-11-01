@@ -14,7 +14,9 @@ import { createMailer } from './core/mail/mailer.js';
 import { createWorker, QUEUES } from './core/queue/queues.js';
 import { createRedisClient } from './core/redis/client.js';
 import { createAuthRepository } from './modules/auth/auth.repository.js';
+import { createAttachmentResultsHandler } from './modules/campaigns/jobs/attachment-results.job.js';
 import { createImportResultsHandler } from './modules/contacts/jobs/import-results.job.js';
+import { createTemplateResultsHandler } from './modules/templates/jobs/template-results.job.js';
 import { createAccountValidityJob } from './modules/users/jobs/account-validity.job.js';
 import { createAdReviewJob } from './modules/users/jobs/ad-review.job.js';
 import { createJobsRepository } from './modules/users/jobs/jobs.repository.js';
@@ -45,7 +47,11 @@ await scheduler.every('ad-review', AD_REVIEW_MS, createAdReviewJob({
 
 // Outcomes of the isolated file inspection (ADR-004), applied with the database.
 const store = createFileStore(config.files.dir);
-const FILE_RESULT_HANDLERS = { contacts_csv: createImportResultsHandler({ pool, store, audit, logger }) };
+const FILE_RESULT_HANDLERS = {
+  contacts_csv: createImportResultsHandler({ pool, store, audit, logger }),
+  template_docx: createTemplateResultsHandler({ pool, store, audit, logger }),
+  campaign_pdf: createAttachmentResultsHandler({ pool, store, audit }),
+};
 const fileResults = createWorker(QUEUES.fileResults, async (job) => {
   const handler = FILE_RESULT_HANDLERS[job.data.kind];
   if (!handler) throw new Error(`unknown file kind: ${job.data.kind}`);

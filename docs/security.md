@@ -405,3 +405,45 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 - En la primera prueba, ClamAV arrancó antes que el proxy de egreso y no pudo actualizar las firmas. Se agregó la dependencia explícita; la actualización a través del proxy quedó verificada en sus logs.
 
+### Fase 8.3 — Plantillas (2026-11-01)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| ADR-004 (.docx no confiable) | Inspección en el `file-processor`: ClamAV; directorio del ZIP revisado con `yauzl` antes de descomprimir (máx. 2.000 entradas, 50 MB descomprimidos, razón 100:1, sin rutas absolutas ni `..`); rechazo de `.doc`/`.docm`, macros (`macroEnabled`, `vbaProject.bin`), objetos incrustados y ActiveX | `unit/templates.test.js`, `integration/templates.test.js` (EICAR, macros) |
+| XXE / referencias externas | Ninguna parte XML con `<!DOCTYPE` o `<!ENTITY`; relaciones externas solo para hipervínculos `https:` y `mailto:`; rechazo de plantillas adjuntas, `altChunk`, frames y subdocumentos (sin imágenes remotas ni píxeles de rastreo) | `unit/templates.test.js` |
+| XSS en correos y vista previa | HTML de `mammoth` sanitizado con `sanitize-html` (allowlist de etiquetas, sin atributos de estilo ni eventos, enlaces solo `https:`/`mailto:`, imágenes solo `cid:`); el texto con `<` del documento se escapa | `unit/templates.test.js`, `integration/templates.test.js` |
+| ADR-012 (vista previa aislada) | Documento propio servido con `Content-Security-Policy: sandbox; default-src 'none'; img-src data:; ...` y headers propios en nginx; cargado en `<iframe sandbox>` sin `allow-scripts` ni `allow-same-origin`, nunca con `srcdoc` | `integration/templates.test.js`, `e2e/run.mjs` |
+| ADR-013 (variables) | Solo `{{nombre}}` con nombre `^[a-z][a-z0-9_]{0,39}$`; cualquier otra sintaxis (bloques, triple llave) o variable cortada por el formato rechaza la versión | `unit/templates.test.js`, `integration/templates.test.js` |
+| Imágenes | Tipo por firma (PNG, JPEG, GIF; nunca SVG), máx. 20 imágenes, 1 MB cada una y 5 MB en total; guardadas en el almacenamiento privado | `unit/templates.test.js` |
+| ADR-008 | Plantillas y versiones con el alcance del área (otra área responde 404, también la vista previa) | `integration/templates.test.js`, `authorization-matrix.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Verificar en el spike de Mandrill el escape de `merge_vars` (ADR-013) antes de enviar; la 8.5 escapa los valores para HTML en EnvioTec.
+- Validar al enviar a aprobación que las variables existan en la lista elegida (8.4).
+
+**Hallazgos de la fase:**
+
+- Las variables que Word corta en varios fragmentos al cambiar el formato a mitad de palabra (`{{nom<b>bre</b>}}`) se detectan y se informan con una indicación clara para corregirlas.
+
+### Fase 8.4 — Campañas (2026-11-01)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| Parte B (maker-checker) | Nadie aprueba una campaña que envió a aprobación: servicio, botón oculto en la UI y CHECK de la base | `unit/campaigns.test.js`, `integration/campaigns.test.js`, `e2e/run.mjs` |
+| A5 | Aprobar exige re-autenticación; enviar y aprobar exigen MFA (política de la Fase 3) | `campaigns.test.js`, `authorization-matrix.test.js` |
+| ADR-011 (cuota) | Reserva del saldo del creador en la transacción de aprobación con bloqueo de fila; sin saldo no se aprueba ni queda foto; editar libera y vuelve a borrador; cancelar libera; cuenta del creador vencida o desactivada no aprueba | `campaigns.test.js` |
+| Parte B (supresión) | La foto de destinatarios excluye la supresión global y a los contactos anonimizados | `campaigns.test.js` |
+| ADR-004 (PDF) | ClamAV, firma `%PDF-`, 5 MB, cifrado rechazado (`qpdf --is-encrypted`), normalización con `qpdf --qdf --object-streams=disable` y rechazo de `/JS`, `/JavaScript`, `/OpenAction`, `/AA`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/XFA` y otros, también escritos con escapes `#xx`; se envía el original y se guarda su SHA-256 | `unit/campaigns.test.js`, `campaigns.test.js` |
+| ADR-013 | Asunto en texto plano sin saltos de línea (servicio y CHECK); las variables de la plantilla deben existir en la lista al enviar a aprobación | `unit/campaigns.test.js`, `campaigns.test.js` |
+| Parte B (pruebas) | Solo al propio correo o a dominios internos permitidos, 5 por día con advisory lock por usuario, descuentan saldo y tope global | `campaigns.test.js` |
+| ADR-008 | Campaña del área de su lista; plantilla y remitente de la misma área; campañas de otra área responden 404 | `campaigns.test.js`, `authorization-matrix.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Entrega real de campañas y pruebas por Mandrill (8.5).
+

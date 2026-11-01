@@ -21,6 +21,9 @@ const DYNAMIC = [
   ...['user', 'system', 'anonymous'].map((s) => `audit.actorTypes.${s}`),
   ...['adjust', 'reserve', 'release', 'consume'].map((s) => `quotas.kinds.${s}`),
   ...['pending', 'completed', 'failed'].map((s) => `imports.status.${s}`),
+  ...['pending', 'ready', 'failed'].map((s) => `templates.status.${s}`),
+  ...['draft', 'submitted', 'approved', 'scheduled', 'sending', 'paused', 'completed', 'cancelled'].map((s) => `campaigns.status.${s}`),
+  ...['pending', 'sending', 'sent', 'rejected', 'suppressed', 'failed', 'cancelled'].map((s) => `campaigns.recipientStatus.${s}`),
   ...['unsubscribe', 'hard_bounce', 'complaint', 'manual', 'anonymized'].map((s) => `suppressions.reasons.${s}`),
 ];
 

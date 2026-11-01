@@ -7,6 +7,8 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
+import { docx, PNG } from '../backend/tests/helpers/docx.js';
+import { pdf } from '../backend/tests/helpers/pdf.js';
 
 const BASE_URL = process.env.BASE_URL;
 const USERNAME = process.env.E2E_USERNAME;
@@ -49,8 +51,16 @@ async function step(name, fn) {
     await fn();
     console.log(`ok   ${name}`);
   } catch (error) {
-    problems.push(`${name}: ${error.message.split('\n')[0]}`);
+    problems.push(`${name}: ${error.message.split('\n').slice(0, 3).join(' | ')}`);
     console.log(`FAIL ${name}`);
+    // What the user would have seen, to diagnose the failure.
+    const seen = await page.evaluate(() => ({
+      hash: window.location.hash,
+      main: document.getElementById('app')?.innerText.slice(0, 600),
+      toasts: [...document.querySelectorAll('.toast')].map((toast) => toast.textContent),
+      dialog: document.querySelector('dialog')?.innerText.slice(0, 400) ?? null,
+    })).catch(() => null);
+    console.log(JSON.stringify(seen));
     throw error;
   }
 }
@@ -183,6 +193,44 @@ try {
     await page.click('button:text-is("Importar")');
     await page.waitForSelector('td:text-is("2 nuevos, 0 actualizados, 1 rechazados")', { timeout: 60000 });
     await page.waitForSelector('td:text-is("ana@e2e.test"), span:text-is("ana@e2e.test")');
+  });
+
+  await step('plantilla .docx convertida y vista previa aislada', async () => {
+    await page.goto(`${BASE_URL}/#/plantillas`);
+    await ready(page, '#/plantillas');
+    await page.click('.page-header button.button-primary');
+    await page.fill('dialog #field-name', `Bienvenida ${suffix}`);
+    await page.selectOption('dialog #field-areaId', { label: areaName });
+    await page.click('dialog form button[type="submit"]');
+    await ready(page, '#/plantillas/');
+    const file = docx({ paragraphs: ['Hola {{first_name}}', 'Su ciudad: {{ciudad}}'], png: PNG });
+    await page.setInputFiles('input[type="file"]', { name: 'bienvenida.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: file });
+    await page.click('button:text-is("Subir .docx")');
+    await page.waitForSelector('span.badge:text-is("Lista")', { timeout: 60000 });
+    await page.click('button:text-is("Vista previa")');
+    const frame = await (await page.waitForSelector('iframe.preview')).contentFrame();
+    await frame.waitForSelector('text=Hola {{first_name}}');
+    await page.click('dialog .modal-close');
+  });
+
+  await step('campaña con PDF inspeccionado y envío a aprobación (maker-checker)', async () => {
+    await page.goto(`${BASE_URL}/#/campanias`);
+    await ready(page, '#/campanias');
+    await page.click('.page-header button.button-primary');
+    await page.waitForSelector('dialog #field-templateId option:nth-child(2)', { state: 'attached' });
+    await page.fill('dialog #field-name', `Lanzamiento ${suffix}`);
+    await page.fill('dialog #field-subject', 'Novedades de EnvioTec');
+    await page.selectOption('dialog #field-templateId', { label: `Bienvenida ${suffix} (v1)` });
+    await page.selectOption('dialog #field-listId', { label: `Clientes ${suffix} (2)` });
+    await page.selectOption('dialog #field-senderId', { label: `Ventas E2E <ventas.${suffix}@envios.e2e.test>` });
+    await page.click('dialog form button[type="submit"]');
+    await ready(page, '#/campanias/');
+    await page.setInputFiles('input[type="file"]', { name: 'folleto.pdf', mimeType: 'application/pdf', buffer: pdf() });
+    await page.click('button:text-is("Subir PDF")');
+    await page.waitForSelector('dd span:has-text("folleto.pdf") .badge:text-is("Lista")', { timeout: 60000 });
+    await page.click('.page-header button:text-is("Enviar a aprobación")');
+    await page.waitForSelector('.badge:text-is("En aprobación")');
+    if (await page.locator('.page-header button:text-is("Aprobar")').count() !== 0) throw new Error('quien envía no debe ver Aprobar');
   });
 
   await step('supresión manual', async () => {

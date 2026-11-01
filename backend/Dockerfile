@@ -15,6 +15,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Development and tests: includes devDependencies and the test suite.
 FROM base AS dev
+# qpdf for the PDF inspection tests (ADR-004).
+RUN apk add --no-cache qpdf
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci && npm cache clean --force
 COPY backend/src ./src
@@ -54,3 +56,11 @@ RUN mkdir -p /data/files && chown node:node /data/files
 USER node
 EXPOSE 3000
 CMD ["node", "src/server.js"]
+
+# Untrusted file inspection (ADR-004): the runtime image plus qpdf, which
+# normalizes PDFs before they are inspected. No npm, non-root user.
+FROM runtime AS file-processor
+USER root
+RUN apk add --no-cache qpdf
+USER node
+CMD ["node", "src/file-processor.js"]

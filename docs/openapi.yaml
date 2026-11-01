@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.8.2
+  version: 0.8.4
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -1183,6 +1183,402 @@ paths:
                 email: { type: string }
       responses:
         '200': { description: Contactos anonimizados y hash suprimido }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/templates:
+    get:
+      summary: 'Plantillas del área (sin archivadas salvo includeArchived)'
+      operationId: listTemplates
+      x-enviotec-permission: templates.view
+      responses:
+        '200': { description: Plantillas }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Crear una plantilla'
+      operationId: createTemplate
+      x-enviotec-permission: templates.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                areaId: { type: string, format: uuid }
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '201': { description: Plantilla }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/templates/{id}:
+    get:
+      summary: 'Detalle con sus versiones'
+      operationId: getTemplate
+      x-enviotec-permission: templates.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Plantilla }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: 'Modificar o archivar'
+      operationId: updateTemplate
+      x-enviotec-permission: templates.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                description: { type: string }
+                isArchived: { type: boolean }
+      responses:
+        '200': { description: Plantilla }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Archivar (nunca se borra: las campañas enviadas conservan su versión)'
+      operationId: archiveTemplate
+      x-enviotec-permission: templates.delete
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Plantilla archivada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/templates/{id}/versions:
+    post:
+      summary: 'Subir una versión .docx (inspección aislada y conversión)'
+      description: 'Solo .docx, hasta 10 MB. En el file-processor: ClamAV; directorio ZIP revisado antes de descomprimir (entradas, tamaño, razón de compresión); rechazo de macros, DTD, referencias externas (salvo enlaces https/mailto), plantillas adjuntas y objetos incrustados; conversión con mammoth; sanitización estricta; imágenes PNG/JPEG/GIF como adjuntos inline (cid); variables {{nombre}}.'
+      operationId: uploadTemplateVersion
+      x-enviotec-permission: templates.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '202': { description: Versión en revisión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/templates/{id}/versions/{version}:
+    get:
+      summary: 'Estado, variables y texto de una versión'
+      operationId: getTemplateVersion
+      x-enviotec-permission: templates.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200': { description: Versión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/templates/{id}/versions/{version}/preview:
+    get:
+      summary: 'Vista previa aislada (HTML con CSP sandbox, sin scripts)'
+      description: 'Se carga en un iframe con sandbox sin permisos. Headers propios: Content-Security-Policy sandbox; default-src none; img-src data:; frame-ancestors self (ADR-012).'
+      operationId: previewTemplateVersion
+      x-enviotec-permission: templates.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200': { description: Documento HTML, content: { text/html: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns:
+    get:
+      summary: 'Campañas del área'
+      operationId: listCampaigns
+      x-enviotec-permission: campaigns.view
+      responses:
+        '200': { description: Campañas }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Crear una campaña (área de su lista)'
+      operationId: createCampaign
+      x-enviotec-permission: campaigns.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, subject, templateId, listId, senderId]
+              properties:
+                name: { type: string }
+                subject: { type: string, maxLength: 200 }
+                templateId: { type: string, format: uuid }
+                listId: { type: string, format: uuid }
+                senderId: { type: string, format: uuid }
+                scheduledAt: { type: [string, 'null'], format: date-time }
+      responses:
+        '201': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}:
+    get:
+      summary: 'Detalle de una campaña'
+      operationId: getCampaign
+      x-enviotec-permission: campaigns.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: 'Editar (aprobada o programada vuelve a borrador y libera la reserva)'
+      operationId: updateCampaign
+      x-enviotec-permission: campaigns.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                subject: { type: string }
+                templateId: { type: string }
+                listId: { type: string }
+                senderId: { type: string }
+                scheduledAt: { type: [string, 'null'] }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Borrar un borrador'
+      operationId: deleteCampaign
+      x-enviotec-permission: campaigns.delete
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Borrada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/attachment:
+    post:
+      summary: 'Subir el PDF (inspección aislada con ClamAV y qpdf)'
+      operationId: uploadCampaignAttachment
+      x-enviotec-permission: campaigns.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '202': { description: PDF en revisión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/recipients:
+    get:
+      summary: 'Foto de destinatarios (emails enmascarados sin contacts.view)'
+      operationId: listCampaignRecipients
+      x-enviotec-permission: campaigns.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Destinatarios }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/submit:
+    post:
+      summary: 'Enviar a aprobación'
+      description: 'Valida plantilla lista, remitente activo, PDF aprobado, lista con contactos y variables existentes en la lista.'
+      operationId: submitCampaign
+      x-enviotec-permission: campaigns.submit
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/approve:
+    post:
+      summary: 'Aprobar (otra persona, re-autenticación)'
+      description: 'Foto de destinatarios sin suprimidos y reserva de la cuota del creador en una transacción; nadie aprueba lo que envió.'
+      operationId: approveCampaign
+      x-enviotec-permission: campaigns.approve
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/reject:
+    post:
+      summary: 'Rechazar con motivo (vuelve a borrador)'
+      operationId: rejectCampaign
+      x-enviotec-permission: campaigns.approve
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/cancel:
+    post:
+      summary: 'Cancelar con motivo (libera lo reservado)'
+      operationId: cancelCampaign
+      x-enviotec-permission: campaigns.cancel
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/pause:
+    post:
+      summary: 'Pausar'
+      operationId: pauseCampaign
+      x-enviotec-permission: campaigns.pause
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/resume:
+    post:
+      summary: 'Reanudar'
+      operationId: resumeCampaign
+      x-enviotec-permission: campaigns.pause
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/campaigns/{id}/test-send:
+    post:
+      summary: 'Envío de prueba (propio correo o dominio interno, 5 por día)'
+      description: 'Descuenta 1 del saldo y del tope global.'
+      operationId: testSendCampaign
+      x-enviotec-permission: campaigns.send_test
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+      responses:
+        '202': { description: Prueba en cola }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }

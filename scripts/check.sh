@@ -7,9 +7,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# One run at a time: two runs would share the project name and the
+# ephemeral secrets, and break each other.
+exec 9>"${TMPDIR:-/tmp}/enviotec-check.lock"
+flock -n 9 || { echo "Ya hay un npm run check en curso." >&2; exit 1; }
+
 GITLEAKS_IMAGE="zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 TRIVY_IMAGE="aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c"
-SCANNED_IMAGES=(enviotec/backend:local enviotec/nginx:local enviotec/egress-proxy:local enviotec/tools:local)
+SCANNED_IMAGES=(enviotec/backend:local enviotec/file-processor:local enviotec/nginx:local enviotec/egress-proxy:local enviotec/tools:local)
 
 # Separate project, secrets and subnets, so the check never touches a running
 # development stack.

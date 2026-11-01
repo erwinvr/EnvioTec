@@ -8,14 +8,16 @@ import { createFileStore } from './core/files/storage.js';
 import { onShutdownSignal } from './core/lifecycle/shutdown.js';
 import { createLogger } from './core/logging/logger.js';
 import { createQueue, createWorker, QUEUES } from './core/queue/queues.js';
+import { processCampaignPdf } from './modules/campaigns/files/campaign-pdf.processor.js';
 import { processContactsCsv } from './modules/contacts/files/contacts-csv.processor.js';
+import { processTemplateDocx } from './modules/templates/files/template-docx.processor.js';
 
 const config = loadConfigOrExit('file-processor');
 const logger = createLogger(config, { service: 'file-processor' });
 const deps = { store: createFileStore(config.files.dir), clamav: createClamav(config.clamav) };
 
 // kind -> inspector. New file types (templates, PDF) register here.
-export const PROCESSORS = { contacts_csv: processContactsCsv };
+export const PROCESSORS = { contacts_csv: processContactsCsv, template_docx: processTemplateDocx, campaign_pdf: processCampaignPdf };
 
 const results = createQueue(QUEUES.fileResults, config.redis);
 const worker = createWorker(QUEUES.files, async (job) => {

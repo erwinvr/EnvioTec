@@ -17,6 +17,7 @@ import { areasRoutes } from './modules/areas/areas.routes.js';
 import { auditLogsRoutes } from './modules/audit-logs/audit-logs.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { createAuthServices } from './modules/auth/auth.services.js';
+import { campaignsRoutes } from './modules/campaigns/campaigns.routes.js';
 import { contactsRoutes } from './modules/contacts/contacts.routes.js';
 import { directoryRoutes } from './modules/directory/directory.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
@@ -26,6 +27,7 @@ import { quotasRoutes } from './modules/quotas/quotas.routes.js';
 import { rolesRoutes } from './modules/roles/roles.routes.js';
 import { sendersRoutes } from './modules/senders/senders.routes.js';
 import { suppressionsRoutes } from './modules/suppressions/suppressions.routes.js';
+import { templatesRoutes } from './modules/templates/templates.routes.js';
 import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 
@@ -46,7 +48,8 @@ const REQUEST_TIMEOUT_MS = 30000;
 // `extraPlugins` are registered after the modules and go through the same
 // route guard; tests use them to exercise the core with their own routes.
 export async function buildApp({
-  config, logger, db, redis, checks, mailer, adClientFactory, fileQueue = unavailableQueue, extraPlugins = [],
+  config, logger, db, redis, checks, mailer, adClientFactory, fileQueue = unavailableQueue, sendQueue = unavailableQueue,
+  extraPlugins = [],
 }) {
   const app = Fastify({
     loggerInstance: logger,
@@ -100,7 +103,10 @@ export async function buildApp({
   await app.register(settingsRoutes, { db, audit });
   await app.register(sendersRoutes, { db, audit });
   await app.register(quotasRoutes, { db, audit });
-  await app.register(contactsRoutes, { db, audit, store: createFileStore(config.files.dir), fileQueue });
+  const store = createFileStore(config.files.dir);
+  await app.register(contactsRoutes, { db, audit, store, fileQueue });
+  await app.register(templatesRoutes, { db, audit, store, fileQueue });
+  await app.register(campaignsRoutes, { db, audit, store, fileQueue, sendQueue });
   await app.register(suppressionsRoutes, { db, audit });
   await app.register(permissionsRoutes, { db });
   await app.register(auditLogsRoutes, { db, audit });

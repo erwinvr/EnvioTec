@@ -15,6 +15,8 @@ import { createPool } from '../../src/core/db/pool.js';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
 import { createRedisClient } from '../../src/core/redis/client.js';
 import { multipart } from '../helpers/auth-fixtures.js';
+import { docx } from '../helpers/docx.js';
+import { pdf } from '../helpers/pdf.js';
 import { deriveCsrfToken } from '../../src/core/security/csrf.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
@@ -94,6 +96,38 @@ const MATRIX_CASES = {
   'POST /api/v1/suppressions': { url: () => '/api/v1/suppressions', success: 201, payload: () => ({ email: `${PREFIX}.alta@matriz.test` }) },
   'DELETE /api/v1/suppressions/:id': { url: (f) => `/api/v1/suppressions/${f.suppressionId}`, success: 200 },
   'POST /api/v1/suppressions/anonymize': { url: () => '/api/v1/suppressions/anonymize', success: 200, payload: () => ({ email: `${PREFIX}.anon@matriz.test` }) },
+  'GET /api/v1/templates': { url: () => '/api/v1/templates', success: 200 },
+  'POST /api/v1/templates': { url: () => '/api/v1/templates', success: 201, payload: () => ({ name: `${PREFIX}-nueva` }) },
+  'GET /api/v1/templates/:id': { url: (f) => `/api/v1/templates/${f.templateId}`, success: 200 },
+  'PATCH /api/v1/templates/:id': { url: (f) => `/api/v1/templates/${f.templateId}`, success: 200, payload: () => ({ description: 'Matriz' }) },
+  'POST /api/v1/templates/:id/versions': {
+    url: (f) => `/api/v1/templates/${f.templateId}/versions`, success: 202,
+    multipart: () => multipart('m.docx', docx(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+  },
+  'GET /api/v1/templates/:id/versions/:version': { url: (f) => `/api/v1/templates/${f.templateId}/versions/1`, success: 200 },
+  'GET /api/v1/templates/:id/versions/:version/preview': { url: (f) => `/api/v1/templates/${f.templateId}/versions/1/preview`, success: 200 },
+  'DELETE /api/v1/templates/:id': { url: (f) => `/api/v1/templates/${f.archivableTemplateId}`, success: 200 },
+  'GET /api/v1/campaigns': { url: () => '/api/v1/campaigns', success: 200 },
+  'POST /api/v1/campaigns': {
+    url: () => '/api/v1/campaigns', success: 201,
+    payload: (f) => ({ name: 'Matriz', subject: 'Asunto', templateId: f.templateId, listId: f.listId, senderId: f.campaignSenderId }),
+  },
+  'GET /api/v1/campaigns/:id': { url: (f) => `/api/v1/campaigns/${f.campaigns.draft}`, success: 200 },
+  'PATCH /api/v1/campaigns/:id': { url: (f) => `/api/v1/campaigns/${f.campaigns.draft}`, success: 200, payload: () => ({ name: 'Matriz editada' }) },
+  'GET /api/v1/campaigns/:id/recipients': { url: (f) => `/api/v1/campaigns/${f.campaigns.draft}/recipients`, success: 200 },
+  'POST /api/v1/campaigns/:id/test-send': {
+    url: (f) => `/api/v1/campaigns/${f.campaigns.draft}/test-send`, success: 202, payload: () => ({ email: `${PREFIX}.allowed@example.test` }),
+  },
+  'POST /api/v1/campaigns/:id/attachment': {
+    url: (f) => `/api/v1/campaigns/${f.campaigns.draft}/attachment`, success: 202, multipart: () => multipart('m.pdf', pdf(), 'application/pdf'),
+  },
+  'POST /api/v1/campaigns/:id/submit': { url: (f) => `/api/v1/campaigns/${f.campaigns.toSubmit}/submit`, success: 200 },
+  'POST /api/v1/campaigns/:id/approve': { url: (f) => `/api/v1/campaigns/${f.campaigns.toApprove}/approve`, success: 200 },
+  'POST /api/v1/campaigns/:id/reject': { url: (f) => `/api/v1/campaigns/${f.campaigns.toReject}/reject`, success: 200, payload: () => ({ reason: 'Revisar asunto' }) },
+  'POST /api/v1/campaigns/:id/cancel': { url: (f) => `/api/v1/campaigns/${f.campaigns.toCancel}/cancel`, success: 200, payload: () => ({ reason: 'Ya no aplica' }) },
+  'POST /api/v1/campaigns/:id/pause': { url: (f) => `/api/v1/campaigns/${f.campaigns.toPause}/pause`, success: 200 },
+  'POST /api/v1/campaigns/:id/resume': { url: (f) => `/api/v1/campaigns/${f.campaigns.toResume}/resume`, success: 200 },
+  'DELETE /api/v1/campaigns/:id': { url: (f) => `/api/v1/campaigns/${f.campaigns.toDelete}`, success: 200 },
   'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
   'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
@@ -110,6 +144,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   let pool;
   let redis;
   let fileQueue;
+  let sendQueue;
   let owner;
   let config;
   const tokens = {};
@@ -157,7 +192,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     redis = createRedisClient(config.redis, logger);
     await redis.connect();
     fileQueue = createQueue(QUEUES.files, config.redis);
-    app = await buildApp({ config, logger, db: pool, redis, fileQueue, checks: { database: async () => {} } });
+    sendQueue = createQueue(QUEUES.send, config.redis);
+    app = await buildApp({ config, logger, db: pool, redis, fileQueue, sendQueue, checks: { database: async () => {} } });
 
     const { rows: area } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [PREFIX]);
     fixtures.areaId = area[0].id;
@@ -203,6 +239,45 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       [`${PREFIX}.s@matriz.test`],
     );
     fixtures.suppressionId = suppression.rows[0].id;
+    const templates = await owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2), ($1, $3) RETURNING id',
+      [fixtures.areaId, `${PREFIX}-plantilla`, `${PREFIX}-archivable`]);
+    [fixtures.templateId, fixtures.archivableTemplateId] = templates.rows.map((row) => row.id);
+    await owner.query(
+      `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, created_by)
+       VALUES ($1, 1, 'ready', gen_random_uuid(), 'm.docx', 10, repeat('a', 64), '<p>Hola</p>', 'Hola', $2)`,
+      [fixtures.templateId, allowed],
+    );
+    // Campaign fixtures, one per state-changing route. The matrix user holds
+    // every route permission, so the ones it must approve were submitted by
+    // the target user (maker-checker), and quotas cover the reservations.
+    await owner.query('INSERT INTO contacts (area_id, list_id, email) VALUES ($1, $2, $3)', [fixtures.areaId, fixtures.listId, `${PREFIX}.r@matriz.test`]);
+    await owner.query('INSERT INTO quotas (user_id, assigned) VALUES ($1, 100), ($2, 100)', [allowed, fixtures.targetId]);
+    const campaignSender = await owner.query('INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+      [fixtures.areaId, `${PREFIX}.c@envios.matriz.test`, 'Campañas']);
+    fixtures.campaignSenderId = campaignSender.rows[0].id;
+    const attachment = await owner.query(
+      `INSERT INTO campaign_attachments (area_id, file_id, original_name, size_bytes, sha256, status, created_by)
+       VALUES ($1, gen_random_uuid(), 'm.pdf', 10, repeat('a', 64), 'ready', $2) RETURNING id`,
+      [fixtures.areaId, allowed],
+    );
+    const versionId = (await owner.query('SELECT id FROM template_versions WHERE template_id = $1', [fixtures.templateId])).rows[0].id;
+    const campaign = async (status, extra = {}) => (await owner.query(
+      `INSERT INTO campaigns (area_id, name, subject, template_version_id, list_id, sender_id, attachment_id, status, created_by,
+                              submitted_by, approved_by, reserved, recipient_count)
+       VALUES ($1, 'Matriz', 'Asunto', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [fixtures.areaId, versionId, fixtures.listId, fixtures.campaignSenderId, attachment.rows[0].id, status, extra.createdBy ?? allowed,
+        extra.submittedBy ?? null, extra.approvedBy ?? null, extra.reserved ?? 0, extra.reserved ?? null],
+    )).rows[0].id;
+    fixtures.campaigns = {
+      draft: await campaign('draft'),
+      toSubmit: await campaign('draft'),
+      toApprove: await campaign('submitted', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId }),
+      toReject: await campaign('submitted', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId }),
+      toCancel: await campaign('submitted', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId }),
+      toPause: await campaign('approved', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId, approvedBy: allowed }),
+      toResume: await campaign('paused', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId, approvedBy: allowed }),
+      toDelete: await campaign('draft'),
+    };
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));
     await createSession('disabled', await createUser('disabled', { roleId: fixtures.roleId, status: 'disabled' }));
@@ -225,6 +300,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     await pool?.end();
     await redis?.quit();
     await fileQueue?.close();
+    await sendQueue?.close();
     if (owner) {
       // Audited users cannot be deleted (audit_logs references them with ON
       // DELETE RESTRICT): fixtures are soft-deleted and lose their access.
@@ -308,7 +384,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const routes = app.routeInventory.filter((route) => !route.public && route.method !== 'HEAD');
     for (const route of routes) {
       const url = route.url.replace(':id', route.url.includes('sessions') ? 'a'.repeat(64) : fixtures.targetId)
-        .replace(':key', 'test_send.daily_max_per_user').replace(':userId', fixtures.targetId);
+        .replace(':key', 'test_send.daily_max_per_user').replace(':userId', fixtures.targetId).replace(':version', '1');
       const res = await request(route.method, url);
       assert.equal(res.statusCode, 401, `${route.method} ${route.url}`);
     }

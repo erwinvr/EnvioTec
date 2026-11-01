@@ -118,8 +118,11 @@ services:
   # Redis (its own ACL user, limited to the file queues) and ClamAV.
   file-processor:
     <<: *hardening
-    build: *backend-build
-    image: enviotec/backend:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: file-processor
+    image: enviotec/file-processor:local
     init: true
     command: ["node", "src/file-processor.js"]
     tmpfs: [/tmp]

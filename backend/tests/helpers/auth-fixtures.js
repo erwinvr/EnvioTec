@@ -49,7 +49,7 @@ export const totpFor = (secretBase32, offset = 0) => hotp(base32Decode(secretBas
 let ipCounter = 1;
 export const nextIp = () => `10.77.${Math.floor(ipCounter / 250)}.${(ipCounter++ % 250) + 1}`;
 
-export async function createHarness({ env = {}, mailer, adClientFactory, fileQueue } = {}) {
+export async function createHarness({ env = {}, mailer, adClientFactory, fileQueue, sendQueue } = {}) {
   const prefix = `t${randomBytes(4).toString('hex')}`;
   const config = loadConfig({ ...process.env, ...env });
   const logger = pino({ level: 'silent' });
@@ -58,7 +58,7 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
   const pool = createPool(config.database, logger, 'enviotec-tests');
   const redis = createRedisClient(config.redis, logger);
   await redis.connect();
-  const app = await buildApp({ config, logger, db: pool, redis, mailer, adClientFactory, fileQueue, checks: { database: async () => {} } });
+  const app = await buildApp({ config, logger, db: pool, redis, mailer, adClientFactory, fileQueue, sendQueue, checks: { database: async () => {} } });
   const passwordHash = await hashPassword(PASSWORD, config.argon2);
   const { rows: area } = await owner.query('INSERT INTO areas (name, ad_department) VALUES ($1, $2) RETURNING id', [prefix, `${prefix}-dep`]);
   const roles = {};

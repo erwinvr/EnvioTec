@@ -14,6 +14,7 @@ const redis = createRedisClient(config.redis, logger);
 await redis.connect();
 
 const fileQueue = createQueue(QUEUES.files, config.redis);
+const sendQueue = createQueue(QUEUES.send, config.redis);
 
 const app = await buildApp({
   config,
@@ -21,6 +22,7 @@ const app = await buildApp({
   db: pool,
   redis,
   fileQueue,
+  sendQueue,
   checks: {
     database: () => pool.query('SELECT 1'),
     redis: () => redis.ping(),
@@ -29,7 +31,7 @@ const app = await buildApp({
 
 onShutdownSignal(logger, async () => {
   await app.close();
-  await Promise.allSettled([pool.end(), redis.quit(), fileQueue.close()]);
+  await Promise.allSettled([pool.end(), redis.quit(), fileQueue.close(), sendQueue.close()]);
 });
 
 await app.listen({ host: '0.0.0.0', port: config.port });

@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 8 (módulos de negocio). Núcleo completo (API y pantallas). Entregadas 8.1 (remitentes y cuotas) y 8.2 (contactos, importación CSV aislada con antivirus, supresión y anonimización). Siguiente: 8.3 plantillas. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 8 (módulos de negocio). Núcleo completo (API y pantallas). Entregadas 8.1 (remitentes y cuotas), 8.2 (contactos, importación CSV aislada con antivirus, supresión y anonimización), 8.3 (plantillas .docx inspeccionadas y vista previa aislada) y 8.4 (campañas con PDF inspeccionado y aprobación maker-checker). Siguiente: 8.5 envío y sincronización con Mandrill. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 

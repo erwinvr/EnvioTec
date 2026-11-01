@@ -6,10 +6,11 @@ import { Redis } from 'ioredis';
 // skipped because it needs INFO, which the Redis ACL denies to every service.
 //   files          backend -> file-processor: inspect an uploaded file
 //   files-results  file-processor -> worker: outcome of the inspection
+//   send           backend/worker -> worker: test sends and campaign batches
 // Each queue and worker owns its Redis connection and closes it with
 // close(): BullMQ does not close a connection it was given.
 
-export const QUEUES = Object.freeze({ files: 'files', fileResults: 'files-results' });
+export const QUEUES = Object.freeze({ files: 'files', fileResults: 'files-results', send: 'send' });
 
 const DEFAULT_JOB = {
   attempts: 3,
