@@ -3,11 +3,18 @@
 # No real secret lives here: every secret comes from files in ${SECRETS_DIR}.
 name: enviotec
 
+# Container logs rotate locally (the 12-month retention is the central log
+# system's job, runbook section 7).
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "10" }
+
 x-hardening: &hardening
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
   restart: unless-stopped
+  logging: *logging
 
 x-backend-build: &backend-build
   context: .
@@ -151,6 +158,7 @@ services:
   # Antivirus (ADR-004). Signatures are updated by freshclam through the
   # egress proxy (ADR-009, ADR-015).
   clamav:
+    logging: *logging
     image: clamav/clamav:1.5.4@sha256:bda39705e291105049c3936e2803ac90b955172af8030f94f05dce1252df6c6d
     restart: unless-stopped
     read_only: true

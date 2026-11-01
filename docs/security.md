@@ -102,7 +102,7 @@ Navegador ──TB1──▶ Nginx ──TB2──▶ Backend ──TB3──▶
 | T20 | R | Un usuario niega haber enviado, aprobado o cancelado | Auditoría con actor, sesión, IP y `request_id`; SHA-256 del PDF y versión de la plantilla en la campaña | V16 | 4, 8 |
 | T21 | R | Cambios de parámetros, vigencias o cuotas sin rastro | Auditoría con valor anterior y nuevo; motivo obligatorio en renovaciones y ajustes de cuota | V16 | 5, 8 |
 | T22 | I | IDOR entre áreas | Filtro por `area_id` en cada consulta del repository; objeto de otra área → 404 auditado como `denied`; tests por endpoint | V8 | 5, 8 |
-| T23 | I | Exportación masiva de datos personales | Permisos `contacts.export` / `reports.export`, alcance por área, auditoría de cada exportación, límite de filas. Sin MFA: riesgo aceptado (ADR-014) | V8, V14 | 8 |
+| T23 | I | Exportación masiva de datos personales | Permisos `contacts.export` / `reports.export`, alcance por área, enmascarado sin `contacts.view`, auditoría de cada exportación; sin límite de filas (acotado por la lista o la campaña, hallazgo H10). Sin MFA: riesgo aceptado (ADR-014) | V8, V14 | 8 |
 | T24 | I | CSV injection en exportaciones | Prefijo `'` en celdas que empiezan con `=`, `+`, `-`, `@`, tabulador o retorno de carro | V1 | 8 |
 | T25 | I | Archivos accesibles desde la web | Volumen privado, nombre generado por el servidor (UUID), descarga autenticada con `Content-Disposition: attachment` | V5 | 8 |
 | T26 | I | Secretos en logs, código o Git | Redacción en Pino, Docker secrets, gitleaks en `npm run check` | V13, V16 | 1 |
@@ -113,7 +113,7 @@ Navegador ──TB1──▶ Nginx ──TB2──▶ Backend ──TB3──▶
 | T31 | D | PDF o CSV enorme o malformado | Límite de bytes en multipart (PDF 5 MB), límite de filas, streaming, timeout por trabajo | V5 | 8 |
 | T32 | D | Bloqueo de cuentas de AD (umbral de 3) causado desde EnvioTec | Corte a los 2 intentos fallidos por cuenta de AD con bloqueo de 15 minutos (ventana de AD); rate limiting por IP | V6 | 3 |
 | T33 | D | Una campaña grande acapara el worker | Colas separadas (envío, sincronización, archivos, mantenimiento), concurrencia limitada, envío por lotes | V15 | 8 |
-| T34 | D | Límites del proveedor o del plan agotados | Respeto de límites de Mandrill con backoff exponencial y jitter; tope global mensual que pausa campañas | V15 | 8 |
+| T34 | D | Límites del proveedor o del plan agotados | Lote devuelto ante un error del proveedor y reencolado con backoff exponencial (5 a 60 minutos); tope global mensual que pausa campañas | V15 | 8 |
 | T35 | E | Escalamiento de privilegios por roles o permisos | Las seis reglas de A6; roles administrativos solo en cuentas locales (trigger en BD); grupos de AD mapeados solo a roles de negocio | V8 | 6 |
 | T36 | E | Saltarse la aprobación con envíos de prueba | Solo al propio correo o a dominios internos permitidos; máximo 5 por usuario por día; descuentan cuota | V2 | 8 |
 | T37 | E | Un aprobador aprueba su propia campaña | Regla en el service y CHECK `approved_by <> submitted_by` en la BD | V2, V8 | 8 |
@@ -155,7 +155,7 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 | R14 | Herramientas de `npm run check` (Trivy, gitleaks) | Se ejecutan como contenedores; requiere Docker donde corra Jenkins | Abierto (Fase 1) |
 | R15 | Compatibilidad del proveedor LDAPS con el AD real (TLS con la CA interna, atributos, grupos anidados): Samba AD no se puede provisionar en el host de desarrollo | Directorio simulado en los tests (ADR-019); validación con el AD de la organización cuando estén sus datos | Abierto (Fase 3) |
 | R16 | Recuperación por correo sin API key de sistema de Mandrill: el correo queda deshabilitado y se registra una advertencia | Configurar `MANDRILL_SYSTEM_API_KEY` y `MAIL_FROM` del subdominio verificado; probar en el spike 0.5 | Abierto (Fase 3) |
-| R17 | Red hacia el controlador de dominio en producción: las redes del backend son internas | Red dedicada con firewall solo hacia el controlador de dominio (puerto 636), definida en el runbook | Abierto (Fase 9) |
+| R17 | Red hacia el controlador de dominio en producción: las redes del backend son internas | Red dedicada con firewall solo hacia el controlador de dominio (puerto 636): `docs/runbook.md`, sección 8 | Documentado; se aplica al desplegar |
 
 ## 7. Revisión de seguridad por fase
 
@@ -488,3 +488,18 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 **Pendiente:**
 
 - Cálculo de cifras al leer: revisar el rendimiento con volumen real en la Fase 9 (ADR-025).
+
+### Fase 9 — Hardening (2026-11-01)
+
+Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla de hallazgos, en `docs/hardening.md`. Procedimientos de operación en `docs/runbook.md`.
+
+**Controles agregados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| V11 (ciclo de vida de claves) | Rotación de `DATA_ENCRYPTION_KEY`: vuelve a cifrar todos los secretos MFA en una transacción; si uno no se descifra, no rota nada; auditada | `database/tests/operations.test.js` |
+| V7 (terminación de sesiones) | Revocación masiva de sesiones, todas o de un usuario, con motivo obligatorio y auditada | `operations.test.js` |
+| T34 | Backoff exponencial al reencolar lotes devueltos | `integration/sending.test.js` |
+| V16 / DoS | Rotación de logs de todos los contenedores | `docker compose config` |
+
+**Resultado:** sin hallazgos altos ni críticos abiertos. Quedan abiertos, de severidad media o baja, H11 a H16, que dependen del AD de la organización, la API key de Mandrill y el DNS.

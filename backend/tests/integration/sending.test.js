@@ -158,6 +158,9 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
     assert.deepEqual((await batches(id))[0], { id: batchId, status: 'pending', attempts: 1 });
     assert.deepEqual(await quota(), before);
     assert.equal((await recipients(id)).eva.status, 'pending');
+    queued.length = 0;
+    await sender.dispatch();
+    assert.ok(!queued.some((job) => job.batchId === batchId), 'backoff: no se vuelve a encolar enseguida');
     mock.state.mode = 'ok';
     assert.deepEqual(await sender.sendBatch(batchId), { accepted: 1, rejected: 0 });
   });

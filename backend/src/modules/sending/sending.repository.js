@@ -44,12 +44,14 @@ export function createSendingRepository() {
       }
     },
 
-    // Pending batches not queued in the last minutes (a resumed campaign, a
-    // batch put back after a failure); marks them as queued now.
+    // Pending batches to queue: new ones at once; one put back after a
+    // provider error (or a lost job) with exponential backoff, 5, 10, 20,
+    // 40 and then 60 minutes (T34). Marks them as queued now.
     async batchesToQueue(db, campaignId) {
       const { rows } = await db.query(
         `UPDATE send_batches SET queued_at = now()
-          WHERE campaign_id = $1 AND status = 'pending' AND (queued_at IS NULL OR queued_at < now() - interval '5 minutes')
+          WHERE campaign_id = $1 AND status = 'pending'
+            AND (queued_at IS NULL OR queued_at < now() - make_interval(mins => least(60, 5 * power(2, attempts)::int)))
           RETURNING id`,
         [campaignId],
       );
