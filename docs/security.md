@@ -381,3 +381,27 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - Una cuenta local vencida no puede usar su saldo (ADR-011): se valida al aprobar y al enviar (8.4).
 - Configurar los dominios reales de envío y de Reply-To (pendiente del negocio).
 
+### Fase 8.2 — Contactos y supresión (2026-11-01)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| ADR-004 (archivos no confiables) | El CSV se inspecciona en `file-processor` (red `files`, sin base de datos, sin credenciales de BD, sin internet, Redis limitado a sus colas): antivirus ClamAV, rechazo de binarios, encabezado contra los atributos de la lista, validación por fila, deduplicación, límites de tamaño (10 MB) y filas (100.000) | `unit/contacts-files.test.js`, `integration/contacts.test.js` (EICAR rechazado de punta a punta) |
+| A8 (path traversal) | Nombres de archivo siempre generados por el servidor (UUID, validados en cada acceso); el nombre original solo se guarda como texto saneado | `unit/contacts-files.test.js` |
+| A8 (DoS) | Tamaño limitado mientras llega la carga, sin restos en disco; multipart con un único archivo; cuerpo grande solo en las rutas de carga de nginx | `unit/contacts-files.test.js`, `contacts.test.js` (413) |
+| ADR-008 (IDOR) | Listas, contactos e importaciones siempre con el alcance del área; las de otra área responden 404 | `contacts.test.js`, `authorization-matrix.test.js` |
+| Parte B (CSV injection) | Exportación de contactos con celdas entrecomilladas y fórmulas neutralizadas; exportación auditada | `contacts.test.js` |
+| Parte B (supresión) | Global, por hash SHA-256 del email; bajas, rebotes, quejas y anonimizaciones no se quitan (servicio y trigger, incluso para el dueño); solo las manuales | `contacts.test.js` |
+| Parte B (privacidad) | Emails enmascarados en la supresión para perfiles sin `contacts.view`; la auditoría de contactos registra qué campos cambiaron, no sus valores | `contacts.test.js`, `unit/contacts-files.test.js` |
+| Parte B (anonimización) | A pedido del contacto, con `suppressions.manage` y re-autenticación: nombre, atributos y email reemplazados en todas las áreas por un seudónimo; el hash queda en supresión; la auditoría guarda solo el hash | `contacts.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- La supresión se aplica al tomar la foto de destinatarios y en cada lote de envío (8.4 y 8.5).
+- XLSX queda fuera de la v1 (R7).
+
+**Hallazgos de la fase:**
+
+- En la primera prueba, ClamAV arrancó antes que el proxy de egreso y no pudo actualizar las firmas. Se agregó la dependencia explícita; la actualización a través del proxy quedó verificada en sus logs.
+

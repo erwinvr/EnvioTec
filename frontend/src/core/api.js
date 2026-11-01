@@ -44,16 +44,17 @@ export async function toApiError(response) {
 
 // Returns the parsed body ({ data, meta }) or, with { raw: true }, the
 // Response itself (CSV downloads).
-export async function request(method, path, { body, query, raw = false, fetchImpl = fetch } = {}) {
+export async function request(method, path, { body, form, query, raw = false, fetchImpl = fetch } = {}) {
   const headers = { accept: raw ? '*/*' : 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
+  // FormData: the browser sets multipart/form-data with its boundary.
   if (!SAFE_METHODS.has(method) && csrfToken) headers['x-csrf-token'] = csrfToken;
   let response;
   try {
     response = await fetchImpl(buildUrl(path, query), {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
       credentials: 'same-origin',
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -72,4 +73,9 @@ export const api = {
   put: (path, body) => request('PUT', path, { body }),
   delete: (path) => request('DELETE', path),
   download: (path, query) => request('GET', path, { query, raw: true }),
+  upload: (path, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request('POST', path, { form });
+  },
 };

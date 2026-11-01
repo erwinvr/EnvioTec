@@ -19,6 +19,8 @@ COPY backend/package.json backend/package-lock.json ./
 RUN npm ci && npm cache clean --force
 COPY backend/src ./src
 COPY backend/tests ./tests
+# Mount point of the private file store; a new named volume inherits the owner.
+RUN mkdir -p /data/files && chown node:node /data/files
 USER node
 CMD ["node", "src/server.js"]
 
@@ -48,6 +50,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY backend/package.json ./
 COPY backend/src ./src
+RUN mkdir -p /data/files && chown node:node /data/files
 USER node
 EXPOSE 3000
 CMD ["node", "src/server.js"]

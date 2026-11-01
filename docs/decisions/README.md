@@ -25,3 +25,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [019](019-pruebas-de-ad-con-directorio-simulado.md) | Pruebas de AD con directorio simulado | Aceptado |
 | [020](020-programador-de-trabajos-del-worker.md) | Programador de trabajos periódicos del worker | Aceptado |
 | [021](021-frontend-del-nucleo.md) | Frontend del núcleo: QR, idioma y verificación en navegador | Aceptado |
+| [022](022-pipeline-de-archivos-implementado.md) | Implementación del pipeline de archivos aislado | Propuesto |

@@ -6,6 +6,11 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from './error
 const FRAMEWORK_ERRORS = {
   FST_ERR_CTP_BODY_TOO_LARGE: { statusCode: 413, code: 'PAYLOAD_TOO_LARGE', message: 'La solicitud es demasiado grande' },
   FST_ERR_CTP_INVALID_MEDIA_TYPE: { statusCode: 415, code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Tipo de contenido no admitido' },
+  FST_REQ_FILE_TOO_LARGE: { statusCode: 413, code: 'PAYLOAD_TOO_LARGE', message: 'El archivo es demasiado grande' },
+  FST_INVALID_MULTIPART_CONTENT_TYPE: { statusCode: 415, code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Se esperaba un archivo (multipart/form-data)' },
+  FST_FILES_LIMIT: { statusCode: 400, code: 'BAD_REQUEST', message: 'Solo se admite un archivo' },
+  FST_PARTS_LIMIT: { statusCode: 400, code: 'BAD_REQUEST', message: 'Solo se admite un archivo' },
+  FST_FIELDS_LIMIT: { statusCode: 400, code: 'BAD_REQUEST', message: 'Solo se admite un archivo' },
 };
 
 const VALIDATION_CODES = {

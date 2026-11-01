@@ -12,7 +12,9 @@ import { buildApp } from '../../src/app.js';
 import { generateSessionToken, hashToken, SESSION_COOKIE } from '../../src/core/auth/session-token.js';
 import { loadConfig } from '../../src/core/config/index.js';
 import { createPool } from '../../src/core/db/pool.js';
+import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
 import { createRedisClient } from '../../src/core/redis/client.js';
+import { multipart } from '../helpers/auth-fixtures.js';
 import { deriveCsrfToken } from '../../src/core/security/csrf.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
@@ -76,6 +78,22 @@ const MATRIX_CASES = {
   'POST /api/v1/quotas/:userId/adjust': {
     url: (f) => `/api/v1/quotas/${f.targetId}/adjust`, success: 200, payload: () => ({ delta: 10, reason: 'Ajuste de la matriz de autorización' }),
   },
+  'GET /api/v1/lists': { url: () => '/api/v1/lists', success: 200 },
+  'POST /api/v1/lists': { url: () => '/api/v1/lists', success: 201, payload: () => ({ name: `${PREFIX}-nueva`, attributes: ['ciudad'] }) },
+  'GET /api/v1/lists/:id': { url: (f) => `/api/v1/lists/${f.listId}`, success: 200 },
+  'PATCH /api/v1/lists/:id': { url: (f) => `/api/v1/lists/${f.listId}`, success: 200, payload: () => ({ description: 'Matriz' }) },
+  'GET /api/v1/lists/:id/contacts': { url: (f) => `/api/v1/lists/${f.listId}/contacts`, success: 200 },
+  'POST /api/v1/lists/:id/contacts': { url: (f) => `/api/v1/lists/${f.listId}/contacts`, success: 201, payload: () => ({ email: `${PREFIX}@matriz.test` }) },
+  'PATCH /api/v1/contacts/:id': { url: (f) => `/api/v1/contacts/${f.contactId}`, success: 200, payload: () => ({ firstName: 'Otro' }) },
+  'DELETE /api/v1/contacts/:id': { url: (f) => `/api/v1/contacts/${f.contactId}`, success: 200 },
+  'POST /api/v1/lists/:id/imports': { url: (f) => `/api/v1/lists/${f.listId}/imports`, success: 202, multipart: () => multipart('m.csv', 'email\nm@matriz.test\n') },
+  'GET /api/v1/lists/:id/imports': { url: (f) => `/api/v1/lists/${f.listId}/imports`, success: 200 },
+  'GET /api/v1/imports/:id': { url: (f) => `/api/v1/imports/${f.importId}`, success: 200 },
+  'GET /api/v1/lists/:id/export': { url: (f) => `/api/v1/lists/${f.listId}/export`, success: 200 },
+  'GET /api/v1/suppressions': { url: () => '/api/v1/suppressions', success: 200 },
+  'POST /api/v1/suppressions': { url: () => '/api/v1/suppressions', success: 201, payload: () => ({ email: `${PREFIX}.alta@matriz.test` }) },
+  'DELETE /api/v1/suppressions/:id': { url: (f) => `/api/v1/suppressions/${f.suppressionId}`, success: 200 },
+  'POST /api/v1/suppressions/anonymize': { url: () => '/api/v1/suppressions/anonymize', success: 200, payload: () => ({ email: `${PREFIX}.anon@matriz.test` }) },
   'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
   'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
@@ -91,6 +109,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   let app;
   let pool;
   let redis;
+  let fileQueue;
   let owner;
   let config;
   const tokens = {};
@@ -137,7 +156,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     pool = createPool(config.database, logger, 'enviotec-tests');
     redis = createRedisClient(config.redis, logger);
     await redis.connect();
-    app = await buildApp({ config, logger, db: pool, redis, checks: { database: async () => {} } });
+    fileQueue = createQueue(QUEUES.files, config.redis);
+    app = await buildApp({ config, logger, db: pool, redis, fileQueue, checks: { database: async () => {} } });
 
     const { rows: area } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [PREFIX]);
     fixtures.areaId = area[0].id;
@@ -167,6 +187,22 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       [fixtures.areaId, `${PREFIX}@envios.matriz.test`, 'Matriz'],
     );
     fixtures.senderId = sender.rows[0].id;
+    const list = await owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [fixtures.areaId, `${PREFIX}-lista`]);
+    fixtures.listId = list.rows[0].id;
+    const contact = await owner.query('INSERT INTO contacts (area_id, list_id, email) VALUES ($1, $2, $3) RETURNING id',
+      [fixtures.areaId, fixtures.listId, `${PREFIX}.c@matriz.test`]);
+    fixtures.contactId = contact.rows[0].id;
+    const imported = await owner.query(
+      `INSERT INTO contact_imports (area_id, list_id, file_id, original_name, size_bytes, sha256, created_by, status)
+       VALUES ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'failed') RETURNING id`,
+      [fixtures.areaId, fixtures.listId, allowed],
+    );
+    fixtures.importId = imported.rows[0].id;
+    const suppression = await owner.query(
+      "INSERT INTO suppressions (email_hash, email, reason, source) VALUES (sha256(convert_to($1, 'UTF8')), $1, 'manual', 'manual') RETURNING id",
+      [`${PREFIX}.s@matriz.test`],
+    );
+    fixtures.suppressionId = suppression.rows[0].id;
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));
     await createSession('disabled', await createUser('disabled', { roleId: fixtures.roleId, status: 'disabled' }));
@@ -188,6 +224,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     await app?.close();
     await pool?.end();
     await redis?.quit();
+    await fileQueue?.close();
     if (owner) {
       // Audited users cannot be deleted (audit_logs references them with ON
       // DELETE RESTRICT): fixtures are soft-deleted and lose their access.
@@ -210,7 +247,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   // State-changing requests carry what the browser would send: Origin and
   // the session's CSRF token.
   const request = (method, url, token, payload) => {
-    const headers = { origin: config.security.appOrigin };
+    const headers = { origin: config.security.appOrigin, ...(payload?.headers ?? {}) };
+    if (payload?.headers) payload = payload.payload;
     if (token) {
       headers.cookie = `${SESSION_COOKIE}=${token}`;
       headers['x-csrf-token'] = deriveCsrfToken(config.security.csrfSecret, hashToken(token));
@@ -229,12 +267,12 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const [method] = route.split(' ');
 
     it(`${route}: sin sesión -> 401`, async () => {
-      const res = await request(method, testCase.url(fixtures), undefined, testCase.payload?.(fixtures));
+      const res = await request(method, testCase.url(fixtures), undefined, (testCase.multipart ?? testCase.payload)?.(fixtures));
       assert.equal(res.statusCode, 401);
     });
 
     it(`${route}: sesión sin el permiso -> 403`, async () => {
-      const res = await request(method, testCase.url(fixtures), tokens.withoutPermission, testCase.payload?.(fixtures));
+      const res = await request(method, testCase.url(fixtures), tokens.withoutPermission, (testCase.multipart ?? testCase.payload)?.(fixtures));
       assert.equal(res.statusCode, 403);
       assert.equal(res.json().error.code, 'FORBIDDEN');
       const { rows } = await owner.query(
@@ -246,7 +284,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     });
 
     it(`${route}: sesión con el permiso -> ${testCase.success}`, async () => {
-      const res = await request(method, testCase.url(fixtures), tokens.allowed, testCase.payload?.(fixtures));
+      const res = await request(method, testCase.url(fixtures), tokens.allowed, (testCase.multipart ?? testCase.payload)?.(fixtures));
       assert.equal(res.statusCode, testCase.success, res.body);
     });
   }

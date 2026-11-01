@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 8 (módulos de negocio). Núcleo completo (API y pantallas). Iteración 8.1 entregada: remitentes y cuotas. Siguiente: 8.2 contactos y supresión. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 8 (módulos de negocio). Núcleo completo (API y pantallas). Entregadas 8.1 (remitentes y cuotas) y 8.2 (contactos, importación CSV aislada con antivirus, supresión y anonimización). Siguiente: 8.3 plantillas. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 
@@ -27,6 +27,8 @@ worker ──▶ PostgreSQL, Redis, egress-proxy
 
 - **nginx:** TLS, frontend en `/`, `/api/*` y `/health/*` al backend, headers de seguridad (ADR-001).
 - **backend:** API sin estado; varias réplicas posibles.
+- **file-processor:** inspección de archivos no confiables (CSV, .docx, PDF) en la red aislada `files`, sin base de datos ni internet; solo ve Redis (sus colas) y ClamAV (ADR-004, ADR-022).
+- **clamav:** antivirus; actualiza firmas a través del proxy de egreso.
 - **worker:** trabajos periódicos (ADR-020): particiones mensuales, control horario de vigencia de cuentas locales y revisión de AD cada 15 minutos; las colas de envío llegan en la Fase 8.
 - **egress-proxy:** única salida a internet, con allowlist de dominios (ADR-009, ADR-015).
 - Redes Docker `edge`, `data` y `egress` internas (sin internet); PostgreSQL y Redis sin puertos publicados en producción.

@@ -192,6 +192,8 @@ function buildConfig(raw) {
       ? { enabled: true, apiKey: raw.MANDRILL_SYSTEM_API_KEY, from: raw.MAIL_FROM, fromName: raw.MAIL_FROM_NAME }
       : { enabled: false };
   }
+  if (raw.FILES_DIR !== undefined) config.files = { dir: raw.FILES_DIR };
+  if (raw.CLAMAV_HOST !== undefined) config.clamav = { host: raw.CLAMAV_HOST, port: raw.CLAMAV_PORT };
   if (raw.ARGON2_MEMORY_KIB !== undefined) {
     config.argon2 = {
       memoryKib: raw.ARGON2_MEMORY_KIB,

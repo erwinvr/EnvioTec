@@ -62,6 +62,9 @@ services:
       NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,redis,localhost,127.0.0.1
+      FILES_DIR: /data/files
+    volumes:
+      - filestore:/data/files
     secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key]
     networks: [edge, data, egress]
     depends_on:
@@ -95,6 +98,9 @@ services:
       NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,redis,localhost,127.0.0.1
+      FILES_DIR: /data/files
+    volumes:
+      - filestore:/data/files
     secrets: [database_url, redis_url_worker]
     networks: [data, egress]
     depends_on:
@@ -106,6 +112,59 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.00", memory: 512M }
+
+  # Untrusted files (ADR-004): CSV, .docx and PDF are inspected here, with no
+  # database access, no database credentials and no internet. It only sees
+  # Redis (its own ACL user, limited to the file queues) and ClamAV.
+  file-processor:
+    <<: *hardening
+    build: *backend-build
+    image: enviotec/backend:local
+    init: true
+    command: ["node", "src/file-processor.js"]
+    tmpfs: [/tmp]
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REDIS_URL_FILE: /run/secrets/redis_url_files
+      FILES_DIR: /data/files
+      CLAMAV_HOST: clamav
+    volumes:
+      - filestore:/data/files
+    secrets: [redis_url_files]
+    networks: [files]
+    depends_on:
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "1.00", memory: 512M }
+
+  # Antivirus (ADR-004). Signatures are updated by freshclam through the
+  # egress proxy (ADR-009, ADR-015).
+  clamav:
+    image: clamav/clamav:1.5.4@sha256:bda39705e291105049c3936e2803ac90b955172af8030f94f05dce1252df6c6d
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    # The image starts as root to prepare its directories and then runs
+    # freshclam and clamd as the clamav user.
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]
+    tmpfs: [/tmp, /run, /run/clamav, /var/log/clamav]
+    volumes:
+      - clamavdb:/var/lib/clamav
+      - ./infra/clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro
+    networks: [files, egress]
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "1.00", memory: 2G }
 
   # One-off tasks (ADR-017): migrations, seeds and bootstrap, with the
   # app_owner user. Not started by `docker compose up`:
@@ -161,8 +220,8 @@ services:
       - redisdata:/data
       - ./infra/redis/start.sh:/usr/local/etc/redis/start.sh:ro
     tmpfs: [/tmp]
-    secrets: [redis_backend_password, redis_worker_password]
-    networks: [data]
+    secrets: [redis_backend_password, redis_worker_password, redis_files_password]
+    networks: [data, files]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --user healthcheck --pass healthcheck --no-auth-warning ping | grep -q PONG"]
       interval: 5s
@@ -202,10 +261,16 @@ networks:
     internal: true
   egress:
     internal: true
+  # file-processor, ClamAV and Redis only (ADR-004).
+  files:
+    internal: true
 
 volumes:
   pgdata: {}
   redisdata: {}
+  # Private file store: incoming (quarantine) and results. Never served by nginx.
+  filestore: {}
+  clamavdb: {}
 
 secrets:
   postgres_password: { file: "${SECRETS_DIR:-./secrets}/postgres_password" }
@@ -217,6 +282,8 @@ secrets:
   redis_worker_password: { file: "${SECRETS_DIR:-./secrets}/redis_worker_password" }
   redis_url_backend: { file: "${SECRETS_DIR:-./secrets}/redis_url_backend" }
   redis_url_worker: { file: "${SECRETS_DIR:-./secrets}/redis_url_worker" }
+  redis_files_password: { file: "${SECRETS_DIR:-./secrets}/redis_files_password" }
+  redis_url_files: { file: "${SECRETS_DIR:-./secrets}/redis_url_files" }
   csrf_secret: { file: "${SECRETS_DIR:-./secrets}/csrf_secret" }
   data_encryption_key: { file: "${SECRETS_DIR:-./secrets}/data_encryption_key" }
   tls_cert: { file: "${SECRETS_DIR:-./secrets}/tls_cert" }

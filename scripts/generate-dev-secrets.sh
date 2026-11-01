@@ -44,6 +44,7 @@ owner_password=$(hex)
 runtime_password=$(hex)
 redis_backend_password=$(hex)
 redis_worker_password=$(hex)
+redis_files_password=$(hex)
 
 write postgres_password "$postgres_password"
 write db_owner_password "$owner_password"
@@ -54,6 +55,8 @@ write redis_backend_password "$redis_backend_password"
 write redis_worker_password "$redis_worker_password"
 write redis_url_backend "redis://backend:${redis_backend_password}@redis:6379/0"
 write redis_url_worker "redis://worker:${redis_worker_password}@redis:6379/0"
+write redis_files_password "$redis_files_password"
+write redis_url_files "redis://files:${redis_files_password}@redis:6379/0"
 write csrf_secret "$(openssl rand -base64 48 | tr -d '\n')"
 write data_encryption_key "$(openssl rand -base64 32 | tr -d '\n')"
 

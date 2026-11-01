@@ -21,5 +21,8 @@ export const ROUTES = [
   { path: '/auditoria', permission: 'audit.view', load: () => import('./pages/admin/audit.js') },
   { path: '/remitentes', permission: 'senders.manage', load: () => import('./pages/admin/senders.js') },
   { path: '/cuotas', permission: 'quotas.manage', load: () => import('./pages/admin/quotas.js') },
+  { path: '/contactos', permission: 'contacts.view', load: () => import('./pages/contacts/lists.js') },
+  { path: '/contactos/:id', permission: 'contacts.view', load: () => import('./pages/contacts/list-detail.js') },
+  { path: '/supresion', permission: 'suppressions.view', load: () => import('./pages/contacts/suppressions.js') },
   { path: '/mis-envios', permission: 'quotas.view', load: () => import('./pages/my-quota.js') },
 ];

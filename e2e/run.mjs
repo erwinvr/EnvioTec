@@ -169,6 +169,31 @@ try {
     await page.waitForSelector('main .details');
   });
 
+  await step('lista de contactos e importación CSV revisada por antivirus', async () => {
+    await page.goto(`${BASE_URL}/#/contactos`);
+    await ready(page, '#/contactos');
+    await page.click('.page-header button.button-primary');
+    await page.fill('dialog #field-name', `Clientes ${suffix}`);
+    await page.fill('dialog #field-attributes', 'ciudad, plan');
+    await page.selectOption('dialog #field-areaId', { label: areaName });
+    await page.click('dialog form button[type="submit"]');
+    await ready(page, '#/contactos/');
+    const csv = 'email;first_name;ciudad\nana@e2e.test;Ana;La Paz\nmalo;X;Y\nluis@e2e.test;Luis;Sucre\n';
+    await page.setInputFiles('input[type="file"]', { name: 'clientes.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await page.click('button:text-is("Importar")');
+    await page.waitForSelector('td:text-is("2 nuevos, 0 actualizados, 1 rechazados")', { timeout: 60000 });
+    await page.waitForSelector('td:text-is("ana@e2e.test"), span:text-is("ana@e2e.test")');
+  });
+
+  await step('supresión manual', async () => {
+    await page.goto(`${BASE_URL}/#/supresion`);
+    await ready(page, '#/supresion');
+    await page.click('.page-header button:text-is("Suprimir email")');
+    await page.fill('dialog #field-email', `baja.${suffix}@e2e.test`);
+    await page.click('dialog form button[type="submit"]');
+    await page.waitForSelector(`td:text-is("baja.${suffix}@e2e.test")`);
+  });
+
   await step('cambio de idioma', async () => {
     await page.selectOption('select.language', 'en');
     await page.waitForSelector('nav a:text-is("Users")');

@@ -27,6 +27,19 @@ services:
     volumes:
       - ./backend/src:/app/src:ro
 
+  file-processor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: dev
+    image: enviotec/backend:dev
+    command: ["node", "--watch", "src/file-processor.js"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    volumes:
+      - ./backend/src:/app/src:ro
+
   tools:
     environment:
       NODE_ENV: development
@@ -38,4 +51,4 @@ services:
 
   redis:
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
-    networks: [data, public]
+    networks: [data, files, public]

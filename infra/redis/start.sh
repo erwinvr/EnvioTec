@@ -9,6 +9,7 @@ hash_secret() {
 
 backend_hash=$(hash_secret /run/secrets/redis_backend_password)
 worker_hash=$(hash_secret /run/secrets/redis_worker_password)
+files_hash=$(hash_secret /run/secrets/redis_files_password)
 
 umask 077
 cat > /tmp/users.acl <<EOF
@@ -16,6 +17,7 @@ user default off
 user healthcheck on nopass -@all +ping
 user backend on #${backend_hash} ~* &* +@all -@dangerous
 user worker on #${worker_hash} ~* &* +@all -@dangerous
+user files on #${files_hash} ~bull:files:* ~bull:files-results:* &* +@all -@dangerous
 EOF
 
 exec redis-server \

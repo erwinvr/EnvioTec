@@ -6,6 +6,8 @@ import { createSessionRepository } from './core/auth/session.repository.js';
 import { createMfaPolicy } from './core/auth/stage.js';
 import { registerAuthorization } from './core/authorization/authorization.js';
 import { errorHandler, notFoundHandler } from './core/errors/error-handler.js';
+import { ServiceUnavailableError } from './core/errors/errors.js';
+import { createFileStore } from './core/files/storage.js';
 import { registerRouteGuard } from './core/http/route-guard.js';
 import { createMailer } from './core/mail/mailer.js';
 import { registerOriginCheck } from './core/security/csrf.js';
@@ -15,6 +17,7 @@ import { areasRoutes } from './modules/areas/areas.routes.js';
 import { auditLogsRoutes } from './modules/audit-logs/audit-logs.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { createAuthServices } from './modules/auth/auth.services.js';
+import { contactsRoutes } from './modules/contacts/contacts.routes.js';
 import { directoryRoutes } from './modules/directory/directory.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { PERMISSION_CATALOG, PERMISSION_CODES } from './modules/permission-catalog.js';
@@ -22,10 +25,18 @@ import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
 import { quotasRoutes } from './modules/quotas/quotas.routes.js';
 import { rolesRoutes } from './modules/roles/roles.routes.js';
 import { sendersRoutes } from './modules/senders/senders.routes.js';
+import { suppressionsRoutes } from './modules/suppressions/suppressions.routes.js';
 import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 
 const BODY_LIMIT_BYTES = 1024 * 1024;
+
+// Used when no queue is wired (unit tests): uploads fail closed.
+const unavailableQueue = {
+  async add() {
+    throw new ServiceUnavailableError();
+  },
+};
 const REQUEST_TIMEOUT_MS = 30000;
 
 // Builds the application without listening, so tests can use app.inject().
@@ -35,7 +46,7 @@ const REQUEST_TIMEOUT_MS = 30000;
 // `extraPlugins` are registered after the modules and go through the same
 // route guard; tests use them to exercise the core with their own routes.
 export async function buildApp({
-  config, logger, db, redis, checks, mailer, adClientFactory, extraPlugins = [],
+  config, logger, db, redis, checks, mailer, adClientFactory, fileQueue = unavailableQueue, extraPlugins = [],
 }) {
   const app = Fastify({
     loggerInstance: logger,
@@ -89,6 +100,8 @@ export async function buildApp({
   await app.register(settingsRoutes, { db, audit });
   await app.register(sendersRoutes, { db, audit });
   await app.register(quotasRoutes, { db, audit });
+  await app.register(contactsRoutes, { db, audit, store: createFileStore(config.files.dir), fileQueue });
+  await app.register(suppressionsRoutes, { db, audit });
   await app.register(permissionsRoutes, { db });
   await app.register(auditLogsRoutes, { db, audit });
   for (const plugin of extraPlugins) await app.register(plugin);

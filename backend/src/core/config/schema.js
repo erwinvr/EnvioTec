@@ -43,6 +43,9 @@ export const PROPERTIES = {
   MANDRILL_SYSTEM_API_KEY: { type: 'string', minLength: 10, maxLength: 200 },
   MAIL_FROM: { type: 'string', pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$', maxLength: 254 },
   MAIL_FROM_NAME: { type: 'string', minLength: 1, maxLength: 100, default: 'EnvioTec' },
+  FILES_DIR: { type: 'string', pattern: '^/[A-Za-z0-9/_.-]+$', default: '/data/files' },
+  CLAMAV_HOST: { type: 'string', pattern: '^[A-Za-z0-9.-]+$', default: 'clamav' },
+  CLAMAV_PORT: { type: 'integer', minimum: 1, maximum: 65535, default: 3310 },
 };
 
 // Variables required when AD_ENABLED is true.
@@ -67,7 +70,7 @@ export const PROFILES = {
       'LOCKOUT_LOCAL_THRESHOLD', 'LOCKOUT_LOCAL_MAX_MIN', 'LOCKOUT_AD_THRESHOLD', 'LOCKOUT_AD_MIN',
       'PASSWORD_RESET_TTL_MIN', 'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD',
       'LDAP_BASE_DN', 'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM',
-      'MAIL_FROM_NAME',
+      'MAIL_FROM_NAME', 'FILES_DIR',
     ],
   },
   // The worker reviews AD accounts and sends account notices (phase 5).
@@ -76,8 +79,13 @@ export const PROFILES = {
     optional: [
       'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS',
       'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
-      'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME',
+      'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME', 'FILES_DIR',
     ],
+  },
+  // Untrusted file inspection (ADR-004): no database, only Redis and ClamAV.
+  'file-processor': {
+    required: ['NODE_ENV', 'REDIS_URL'],
+    optional: ['LOG_LEVEL', 'FILES_DIR', 'CLAMAV_HOST', 'CLAMAV_PORT'],
   },
   // Migrations, seeds and bootstrap (database/scripts), with the app_owner user.
   tools: {

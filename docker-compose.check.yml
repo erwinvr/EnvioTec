@@ -30,14 +30,20 @@ services:
       EDGE_HTTP_URL: http://nginx:8080
       EDGE_CA_FILE: /run/secrets/tls_cert
       EGRESS_PROXY: egress-proxy:3128
+      FILES_DIR: /data/files
+      CLAMAV_HOST: clamav
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
+    volumes:
+      - filestore:/data/files
     secrets: [database_url, migration_database_url, redis_url_backend, csrf_secret, data_encryption_key, tls_cert]
-    networks: [edge, data, egress]
+    networks: [edge, data, egress, files]
     depends_on:
       nginx:
         condition: service_healthy
       egress-proxy:
         condition: service_healthy
+      file-processor:
+        condition: service_started
 
   # Database tests (database/tests) run in the tools image, which contains the
   # migrations and seeds. They need the owner and the runtime connections.
@@ -68,3 +74,8 @@ services:
       nginx:
         condition: service_healthy
 
+volumes:
+  # ClamAV signatures survive between runs (about 300 MB to download).
+  clamavdb:
+    external: true
+    name: enviotec-clamav-db

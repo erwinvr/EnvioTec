@@ -20,6 +20,8 @@ const DYNAMIC = [
   ...['success', 'denied', 'failure'].map((s) => `audit.results.${s}`),
   ...['user', 'system', 'anonymous'].map((s) => `audit.actorTypes.${s}`),
   ...['adjust', 'reserve', 'release', 'consume'].map((s) => `quotas.kinds.${s}`),
+  ...['pending', 'completed', 'failed'].map((s) => `imports.status.${s}`),
+  ...['unsubscribe', 'hard_bounce', 'complaint', 'manual', 'anonymized'].map((s) => `suppressions.reasons.${s}`),
 ];
 
 describe('i18n (Parte B: español e inglés)', () => {

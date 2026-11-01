@@ -11,6 +11,17 @@ import { createPool } from '../../src/core/db/pool.js';
 import { createRedisClient } from '../../src/core/redis/client.js';
 import { deriveCsrfToken } from '../../src/core/security/csrf.js';
 
+// multipart/form-data body with one file, as a browser sends it.
+export function multipart(filename, content, type = 'text/csv') {
+  const boundary = `----enviotec${randomBytes(8).toString('hex')}`;
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${type}\r\n\r\n`),
+    Buffer.isBuffer(content) ? content : Buffer.from(content),
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { payload, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` } };
+}
+
 // Shared setup for integration tests that log in through the API, against
 // the real PostgreSQL and Redis of the check environment.
 
@@ -38,7 +49,7 @@ export const totpFor = (secretBase32, offset = 0) => hotp(base32Decode(secretBas
 let ipCounter = 1;
 export const nextIp = () => `10.77.${Math.floor(ipCounter / 250)}.${(ipCounter++ % 250) + 1}`;
 
-export async function createHarness({ env = {}, mailer, adClientFactory } = {}) {
+export async function createHarness({ env = {}, mailer, adClientFactory, fileQueue } = {}) {
   const prefix = `t${randomBytes(4).toString('hex')}`;
   const config = loadConfig({ ...process.env, ...env });
   const logger = pino({ level: 'silent' });
@@ -47,7 +58,7 @@ export async function createHarness({ env = {}, mailer, adClientFactory } = {}) 
   const pool = createPool(config.database, logger, 'enviotec-tests');
   const redis = createRedisClient(config.redis, logger);
   await redis.connect();
-  const app = await buildApp({ config, logger, db: pool, redis, mailer, adClientFactory, checks: { database: async () => {} } });
+  const app = await buildApp({ config, logger, db: pool, redis, mailer, adClientFactory, fileQueue, checks: { database: async () => {} } });
   const passwordHash = await hashPassword(PASSWORD, config.argon2);
   const { rows: area } = await owner.query('INSERT INTO areas (name, ad_department) VALUES ($1, $2) RETURNING id', [prefix, `${prefix}-dep`]);
   const roles = {};
@@ -111,8 +122,8 @@ export async function createHarness({ env = {}, mailer, adClientFactory } = {}) 
 
     // Sends a request like the browser would: Origin always; cookie and CSRF
     // token when a session token is given.
-    request(method, url, { token, payload, ip = '10.0.0.1', csrf = true, origin = config.security.appOrigin } = {}) {
-      const headers = {};
+    request(method, url, { token, payload, ip = '10.0.0.1', csrf = true, origin = config.security.appOrigin, headers: extra = {} } = {}) {
+      const headers = { ...extra };
       if (origin) headers.origin = origin;
       if (token) {
         headers.cookie = `${SESSION_COOKIE}=${token}`;

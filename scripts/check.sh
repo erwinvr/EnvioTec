@@ -42,7 +42,9 @@ bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force
 
 step "4/12 Construcción de imágenes y arranque del stack"
 "${COMPOSE[@]}" --profile check build
-"${COMPOSE[@]}" up -d --wait --wait-timeout 180 nginx backend worker postgres redis egress-proxy
+docker volume create enviotec-clamav-db >/dev/null
+# The first run downloads the ClamAV signatures through the egress proxy.
+"${COMPOSE[@]}" up -d --wait --wait-timeout 900 nginx backend worker postgres redis egress-proxy clamav file-processor
 
 step "5/12 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/migrate.js verify

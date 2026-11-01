@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.8.1
+  version: 0.8.2
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -900,6 +900,289 @@ paths:
                 reason: { type: string, minLength: 10, maxLength: 500 }
       responses:
         '200': { description: Saldo resultante }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists:
+    get:
+      summary: 'Listas de contactos del área (todas con areas.view_all)'
+      operationId: listContactLists
+      x-enviotec-permission: contacts.view
+      responses:
+        '200': { description: Listas }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Crear una lista con sus atributos'
+      operationId: createContactList
+      x-enviotec-permission: contacts.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                areaId: { type: string, format: uuid }
+                name: { type: string }
+                description: { type: string }
+                attributes: { type: array, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$' }, maxItems: 30 }
+      responses:
+        '201': { description: Lista }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}:
+    get:
+      summary: 'Detalle de una lista'
+      operationId: getContactList
+      x-enviotec-permission: contacts.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Lista }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: 'Modificar una lista'
+      operationId: updateContactList
+      x-enviotec-permission: contacts.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                description: { type: string }
+                attributes: { type: array, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$' }, maxItems: 30 }
+      responses:
+        '200': { description: Lista }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}/contacts:
+    get:
+      summary: 'Contactos de una lista (paginado, con búsqueda e indicador de supresión)'
+      operationId: listContacts
+      x-enviotec-permission: contacts.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Contactos }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    post:
+      summary: 'Agregar un contacto (único por email en la lista)'
+      operationId: createContact
+      x-enviotec-permission: contacts.create
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+                firstName: { type: [string, 'null'] }
+                lastName: { type: [string, 'null'] }
+                attributes: { type: object, additionalProperties: { type: string } }
+      responses:
+        '201': { description: Contacto }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/contacts/{id}:
+    patch:
+      summary: 'Modificar un contacto'
+      operationId: updateContact
+      x-enviotec-permission: contacts.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email: { type: string }
+                firstName: { type: [string, 'null'] }
+                lastName: { type: [string, 'null'] }
+                attributes: { type: object }
+      responses:
+        '200': { description: Contacto }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Quitar un contacto de la lista'
+      operationId: deleteContact
+      x-enviotec-permission: contacts.delete
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Borrado }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}/imports:
+    post:
+      summary: 'Importar un CSV (se inspecciona aislado con antivirus)'
+      description: 'Hasta 10 MB y 100.000 filas, con encabezado y separador coma o punto y coma. El archivo pasa por ClamAV y se valida fila por fila en el file-processor; el worker carga las filas válidas (upsert por email). Consultar el estado con GET /api/v1/imports/{id}.'
+      operationId: importContacts
+      x-enviotec-permission: contacts.import
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '202': { description: Importación en revisión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    get:
+      summary: 'Últimas importaciones de la lista'
+      operationId: listContactImports
+      x-enviotec-permission: contacts.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Importaciones }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/imports/{id}:
+    get:
+      summary: 'Estado y resultado de una importación'
+      operationId: getContactImport
+      x-enviotec-permission: contacts.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Importación }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}/export:
+    get:
+      summary: 'Exportar la lista en CSV (fórmulas neutralizadas, auditado)'
+      operationId: exportContacts
+      x-enviotec-permission: contacts.export
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/suppressions:
+    get:
+      summary: 'Lista de supresión global (emails enmascarados sin contacts.view)'
+      operationId: listSuppressions
+      x-enviotec-permission: suppressions.view
+      responses:
+        '200': { description: Supresiones }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Suprimir un email manualmente'
+      operationId: addSuppression
+      x-enviotec-permission: suppressions.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+                note: { type: string, maxLength: 500 }
+      responses:
+        '201': { description: Supresión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/suppressions/{id}:
+    delete:
+      summary: 'Quitar una supresión (solo las manuales)'
+      operationId: removeSuppression
+      x-enviotec-permission: suppressions.manage
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Quitada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/suppressions/anonymize:
+    post:
+      summary: 'Anonimizar a un contacto en todas las áreas, a su pedido'
+      description: 'Exige re-autenticación. Irreversible: nombre, atributos y email se reemplazan por un seudónimo; el hash del email queda en supresión.'
+      operationId: anonymizeContact
+      x-enviotec-permission: suppressions.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+      responses:
+        '200': { description: Contactos anonimizados y hash suprimido }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
