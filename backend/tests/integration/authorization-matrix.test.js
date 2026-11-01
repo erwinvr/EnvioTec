@@ -63,6 +63,19 @@ const MATRIX_CASES = {
   'PATCH /api/v1/settings/:key': {
     url: () => '/api/v1/settings/test_send.daily_max_per_user', success: 200, payload: () => ({ value: 5 }),
   },
+  'GET /api/v1/senders': { url: () => '/api/v1/senders', success: 200 },
+  'POST /api/v1/senders': {
+    url: () => '/api/v1/senders', success: 201,
+    payload: (f) => ({ areaId: f.areaId, email: `${PREFIX}.nuevo@envios.matriz.test`, displayName: 'Matriz' }),
+  },
+  'PATCH /api/v1/senders/:id': { url: (f) => `/api/v1/senders/${f.senderId}`, success: 200, payload: () => ({ displayName: 'Otro' }) },
+  'GET /api/v1/quotas/me': { url: () => '/api/v1/quotas/me', success: 200 },
+  'GET /api/v1/quotas/global': { url: () => '/api/v1/quotas/global', success: 200 },
+  'GET /api/v1/quotas': { url: () => '/api/v1/quotas', success: 200 },
+  'GET /api/v1/quotas/:userId/movements': { url: (f) => `/api/v1/quotas/${f.allowedId}/movements`, success: 200 },
+  'POST /api/v1/quotas/:userId/adjust': {
+    url: (f) => `/api/v1/quotas/${f.targetId}/adjust`, success: 200, payload: () => ({ delta: 10, reason: 'Ajuste de la matriz de autorización' }),
+  },
   'GET /api/v1/audit-logs': { url: () => '/api/v1/audit-logs?pageSize=5', success: 200 },
   'GET /api/v1/audit-logs/export': { url: () => `/api/v1/audit-logs/export?${exportRange()}`, success: 200 },
 };
@@ -145,6 +158,15 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       [`CN=${PREFIX}-fijo,DC=empresa,DC=test`, fixtures.mappedRoleId]);
     fixtures.mappingId = mapping.rows[0].id;
     const allowed = await createUser('allowed', { roleId: fixtures.roleId });
+    fixtures.allowedId = allowed;
+    const domains = await owner.query("SELECT key, value FROM system_settings WHERE key IN ('sending.sender_domains', 'sending.reply_to_domains')");
+    fixtures.savedDomains = domains.rows;
+    await owner.query("UPDATE system_settings SET value = '[\"envios.matriz.test\"]' WHERE key = 'sending.sender_domains'");
+    const sender = await owner.query(
+      'INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+      [fixtures.areaId, `${PREFIX}@envios.matriz.test`, 'Matriz'],
+    );
+    fixtures.senderId = sender.rows[0].id;
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));
     await createSession('disabled', await createUser('disabled', { roleId: fixtures.roleId, status: 'disabled' }));
@@ -175,6 +197,9 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
         [`${PREFIX}.%`],
       );
       await owner.query('DELETE FROM ad_group_role_mappings WHERE group_dn LIKE $1', [`CN=${PREFIX}-%`]);
+      for (const row of fixtures.savedDomains ?? []) {
+        await owner.query('UPDATE system_settings SET value = $2::jsonb WHERE key = $1', [row.key, JSON.stringify(row.value)]);
+      }
       await owner.query('DELETE FROM user_roles WHERE role_id = $1', [fixtures.roleId]);
       await owner.query('DELETE FROM role_permissions WHERE role_id = $1', [fixtures.roleId]);
       await owner.query("UPDATE users SET deleted_at = now(), status = 'disabled' WHERE username LIKE $1", [`${PREFIX}.%`]);
@@ -245,7 +270,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const routes = app.routeInventory.filter((route) => !route.public && route.method !== 'HEAD');
     for (const route of routes) {
       const url = route.url.replace(':id', route.url.includes('sessions') ? 'a'.repeat(64) : fixtures.targetId)
-        .replace(':key', 'test_send.daily_max_per_user');
+        .replace(':key', 'test_send.daily_max_per_user').replace(':userId', fixtures.targetId);
       const res = await request(route.method, url);
       assert.equal(res.statusCode, 401, `${route.method} ${route.url}`);
     }

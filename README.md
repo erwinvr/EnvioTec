@@ -2,7 +2,7 @@
 
 Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a partir de plantillas Word con variables, con cuotas por usuario, aprobación de campañas y reportes. El envío usa Mailchimp Transactional (Mandrill).
 
-> **Estado:** Fase 7 (frontend del núcleo): API y pantallas del núcleo completas (login con MFA, usuarios, roles, áreas, directorio, parámetros, auditoría). Siguiente: módulos de negocio (Fase 8). Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
+> **Estado:** Fase 8 (módulos de negocio). Núcleo completo (API y pantallas). Iteración 8.1 entregada: remitentes y cuotas. Siguiente: 8.2 contactos y supresión. Todavía no hay pantallas (Fase 7) ni módulos de negocio. El plan completo está en [docs/architecture.md](docs/architecture.md#6-plan-de-fases).
 
 ## Documentación
 

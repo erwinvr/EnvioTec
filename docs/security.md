@@ -361,3 +361,23 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 - El origen del entorno de verificación pasó a ser `https://nginx:8443` para que el navegador de la prueba cumpla el control de `Origin`; los tests del backend siguen usando su propio origen.
 
+### Fase 8.1 — Remitentes y cuotas (2026-10-31)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| Parte B (remitentes) | El From solo del subdominio de envío (`sending.sender_domains`) y el Reply-To solo de dominios con buzones (`sending.reply_to_domains`); sin dominios configurados no se crean remitentes; únicos por área; nunca se borran; el email no cambia | `unit/quotas-senders-rules.test.js`, `integration/senders-quotas.test.js` |
+| Inyección de cabeceras | El nombre visible no admite saltos de línea, comillas ni `<>` (schema y CHECK en la base) | `senders-quotas.test.js` |
+| ADR-008 | El operador ve solo los remitentes activos de su área | `senders-quotas.test.js` |
+| ADR-011 (cuotas) | `reserved + consumed <= assigned` y no negativos (CHECK); toda operación con `SELECT … FOR UPDATE`; dos reservas simultáneas no superan el saldo | `senders-quotas.test.js` |
+| Parte B (abuso interno) | Ajuste con `quotas.manage`, motivo y re-autenticación; nadie ajusta su propio saldo; sin `areas.view_all` cada usuario ve solo el suyo | `senders-quotas.test.js`, `authorization-matrix.test.js` |
+| A7 / ADR-011 | `quota_movements` append-only, con un trigger que rechaza `UPDATE`, `DELETE` y `TRUNCATE` incluso para el dueño; cada movimiento también en la auditoría, en la misma transacción | `senders-quotas.test.js` |
+| Parte B (tope global) | `monthly_send_usage` por mes de America/La_Paz con bloqueo de fila; superar el tope responde `GLOBAL_CAP_REACHED` sin consumir nada | `senders-quotas.test.js`, `unit/quotas-senders-rules.test.js` |
+
+**Pendiente para fases siguientes:**
+
+- Reserva al aprobar, consumo por lote, liberación al cancelar o volver a borrador, y pausa de campañas al llegar al tope (8.4 y 8.5). Los bloques ya están listos y probados.
+- Una cuenta local vencida no puede usar su saldo (ADR-011): se valida al aprobar y al enviar (8.4).
+- Configurar los dominios reales de envío y de Reply-To (pendiente del negocio).
+

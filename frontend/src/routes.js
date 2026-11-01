@@ -19,4 +19,7 @@ export const ROUTES = [
   { path: '/directorio', permission: 'directory.manage', load: () => import('./pages/admin/directory.js') },
   { path: '/parametros', permission: 'settings.manage', load: () => import('./pages/admin/settings.js') },
   { path: '/auditoria', permission: 'audit.view', load: () => import('./pages/admin/audit.js') },
+  { path: '/remitentes', permission: 'senders.manage', load: () => import('./pages/admin/senders.js') },
+  { path: '/cuotas', permission: 'quotas.manage', load: () => import('./pages/admin/quotas.js') },
+  { path: '/mis-envios', permission: 'quotas.view', load: () => import('./pages/my-quota.js') },
 ];

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EnvioTec API
-  version: 0.6.0
+  version: 0.8.1
   description: |
     API interna de EnvioTec. Todas las respuestas usan el formato único:
     `{ success: true, data, meta? }` o `{ success: false, error: { code, message, details?, requestId } }`.
@@ -781,6 +781,130 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /api/v1/senders:
+    get:
+      summary: 'Remitentes (activos de la propia área; con senders.manage, también inactivos)'
+      operationId: listSenders
+      x-enviotec-permission: campaigns.view
+      responses:
+        '200': { description: Remitentes }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 'Crear un remitente permitido'
+      description: 'El From debe pertenecer a sending.sender_domains y el Reply-To a sending.reply_to_domains. El nombre visible no admite saltos de línea, comillas ni < >.'
+      operationId: createSender
+      x-enviotec-permission: senders.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [areaId, email, displayName]
+              properties:
+                areaId: { type: string, format: uuid }
+                email: { type: string }
+                displayName: { type: string, maxLength: 100 }
+                replyTo: { type: [string, 'null'] }
+      responses:
+        '201': { description: Remitente }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/senders/{id}:
+    patch:
+      summary: 'Modificar nombre, Reply-To o estado de un remitente (el email no cambia)'
+      operationId: updateSender
+      x-enviotec-permission: senders.manage
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                displayName: { type: string }
+                replyTo: { type: [string, 'null'] }
+                isActive: { type: boolean }
+      responses:
+        '200': { description: Remitente }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/quotas/me:
+    get:
+      summary: 'Saldo propio e historial de movimientos'
+      operationId: getMyQuota
+      x-enviotec-permission: quotas.view
+      responses:
+        '200': { description: Saldo e historial }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/quotas/global:
+    get:
+      summary: 'Uso del mes (America/La_Paz) contra el tope global'
+      operationId: getGlobalQuota
+      x-enviotec-permission: quotas.view
+      responses:
+        '200': { description: Uso del mes }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/quotas:
+    get:
+      summary: 'Saldos (sin areas.view_all, solo el propio)'
+      operationId: listQuotas
+      x-enviotec-permission: quotas.view
+      responses:
+        '200': { description: Saldos }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/quotas/{userId}/movements:
+    get:
+      summary: 'Historial de movimientos de un usuario (append-only)'
+      operationId: listQuotaMovements
+      x-enviotec-permission: quotas.view
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Historial }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/quotas/{userId}/adjust:
+    post:
+      summary: 'Ajustar el saldo asignado'
+      description: 'Re-autenticación y motivo obligatorios; nunca el propio saldo (409); nunca por debajo de lo reservado y consumido (422). Movimiento y auditoría en la misma transacción.'
+      operationId: adjustQuota
+      x-enviotec-permission: quotas.manage
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [delta, reason]
+              properties:
+                delta: { type: integer }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        '200': { description: Saldo resultante }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /api/v1/audit-logs:
     get:
       summary: Consultar la auditoría (vista global, sin filtro por área)
@@ -1078,7 +1202,7 @@ components:
             code:
               type: string
               enum: [VALIDATION_ERROR, BAD_REQUEST, AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS, FORBIDDEN,
-                     AUTH_STEP_REQUIRED, REAUTH_REQUIRED, PRIVILEGE_ESCALATION, CSRF_REJECTED, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE,
+                     AUTH_STEP_REQUIRED, REAUTH_REQUIRED, PRIVILEGE_ESCALATION, GLOBAL_CAP_REACHED, CSRF_REJECTED, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE,
                      UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED, INTERNAL_ERROR, SERVICE_UNAVAILABLE]
             message: { type: string }
             requestId: { type: string, format: uuid }

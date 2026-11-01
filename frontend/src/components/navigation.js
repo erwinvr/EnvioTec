@@ -6,10 +6,13 @@ import { navigate } from '../core/router.js';
 // Menu entries are shown according to permissions (UX only, A6).
 const ITEMS = [
   { path: '/', label: 'nav.home' },
+  { path: '/mis-envios', label: 'nav.myQuota', permission: 'quotas.view' },
   { path: '/usuarios', label: 'nav.users', permission: 'users.view' },
   { path: '/roles', label: 'nav.roles', permission: 'roles.view' },
   { path: '/areas', label: 'nav.areas', permission: 'areas.manage' },
   { path: '/directorio', label: 'nav.directory', permission: 'directory.manage' },
+  { path: '/remitentes', label: 'nav.senders', permission: 'senders.manage' },
+  { path: '/cuotas', label: 'nav.quotas', permission: 'quotas.manage' },
   { path: '/parametros', label: 'nav.settings', permission: 'settings.manage' },
   { path: '/auditoria', label: 'nav.audit', permission: 'audit.view' },
 ];

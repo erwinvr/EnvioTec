@@ -120,10 +120,10 @@ try {
     await page.waitForSelector(`td:text-is("${areaName}")`);
   });
 
+  const suffix = Date.now().toString(36);
   await step('alta de una cuenta local con contraseña temporal', async () => {
     await page.goto(`${BASE_URL}/#/usuarios/nuevo`);
     await ready(page, '#/usuarios/nuevo');
-    const suffix = Date.now().toString(36);
     await page.fill('#field-username', `e2e.${suffix}`);
     await page.fill('#field-email', `e2e.${suffix}@empresa.test`);
     await page.fill('#field-displayName', 'Usuario E2E');
@@ -135,6 +135,38 @@ try {
     await page.click('.secret-box ~ .actions button');
     await ready(page, '#/usuarios/');
     await page.waitForSelector('.permission-list, .details');
+  });
+
+  await step('parámetro de dominios de envío y alta de un remitente', async () => {
+    await page.goto(`${BASE_URL}/#/parametros`);
+    await ready(page, '#/parametros');
+    await page.click('tr:has(code:text-is("sending.sender_domains")) button');
+    await page.fill('dialog #field-value', 'envios.e2e.test');
+    await page.click('dialog form button[type="submit"]');
+    await page.waitForSelector('tr:has(code:text-is("sending.sender_domains")) td:text-is("envios.e2e.test")');
+    await page.goto(`${BASE_URL}/#/remitentes`);
+    await ready(page, '#/remitentes');
+    await page.click('.page-header button.button-primary');
+    await page.selectOption('dialog #field-areaId', { label: areaName });
+    await page.fill('dialog #field-email', `ventas.${suffix}@envios.e2e.test`);
+    await page.fill('dialog #field-displayName', 'Ventas E2E');
+    await page.click('dialog form button[type="submit"]');
+    await page.waitForSelector(`code:text-is("ventas.${suffix}@envios.e2e.test")`);
+  });
+
+  await step('ajuste de cuota con motivo y saldo propio', async () => {
+    await page.goto(`${BASE_URL}/#/cuotas`);
+    await ready(page, '#/cuotas');
+    await page.fill('.filters input[name="search"]', `e2e.${suffix}`);
+    await page.click('.filters button[type="submit"]');
+    await page.click(`tr:has(td:text-is("e2e.${suffix}")) button:text-is("Ajustar")`);
+    await page.fill('dialog #field-delta', '250');
+    await page.fill('dialog #field-reason', 'Asignación de prueba del recorrido E2E');
+    await page.click('dialog form button[type="submit"]');
+    await page.waitForSelector(`tr:has(td:text-is("e2e.${suffix}")) td:text-is("250")`);
+    await page.goto(`${BASE_URL}/#/mis-envios`);
+    await ready(page, '#/mis-envios');
+    await page.waitForSelector('main .details');
   });
 
   await step('cambio de idioma', async () => {

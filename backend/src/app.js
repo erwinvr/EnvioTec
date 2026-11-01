@@ -19,7 +19,9 @@ import { directoryRoutes } from './modules/directory/directory.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { PERMISSION_CATALOG, PERMISSION_CODES } from './modules/permission-catalog.js';
 import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
+import { quotasRoutes } from './modules/quotas/quotas.routes.js';
 import { rolesRoutes } from './modules/roles/roles.routes.js';
+import { sendersRoutes } from './modules/senders/senders.routes.js';
 import { settingsRoutes } from './modules/settings/settings.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 
@@ -85,6 +87,8 @@ export async function buildApp({
   await app.register(rolesRoutes, { db, audit });
   await app.register(directoryRoutes, { db, ad, audit });
   await app.register(settingsRoutes, { db, audit });
+  await app.register(sendersRoutes, { db, audit });
+  await app.register(quotasRoutes, { db, audit });
   await app.register(permissionsRoutes, { db });
   await app.register(auditLogsRoutes, { db, audit });
   for (const plugin of extraPlugins) await app.register(plugin);

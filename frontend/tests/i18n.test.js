@@ -19,6 +19,7 @@ const DYNAMIC = [
   ...['local', 'ad'].map((s) => `users.source.${s}`),
   ...['success', 'denied', 'failure'].map((s) => `audit.results.${s}`),
   ...['user', 'system', 'anonymous'].map((s) => `audit.actorTypes.${s}`),
+  ...['adjust', 'reserve', 'release', 'consume'].map((s) => `quotas.kinds.${s}`),
 ];
 
 describe('i18n (Parte B: español e inglés)', () => {
