@@ -27,3 +27,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [021](021-frontend-del-nucleo.md) | Frontend del núcleo: QR, idioma y verificación en navegador | Aceptado |
 | [022](022-pipeline-de-archivos-implementado.md) | Implementación del pipeline de archivos aislado | Propuesto |
 | [023](023-campanias-decisiones-de-implementacion.md) | Campañas: decisiones de implementación | Propuesto |
+| [024](024-envio-y-sincronizacion.md) | Envío y sincronización con Mandrill | Propuesto |

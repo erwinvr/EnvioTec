@@ -5,7 +5,7 @@
 
 import { withTransaction } from './transaction.js';
 
-export const PARTITIONED_TABLES = ['audit_logs'];
+export const PARTITIONED_TABLES = ['audit_logs', 'message_events'];
 const MONTHS_AHEAD = 12;
 const MIN_MONTHS_AHEAD = 3;
 

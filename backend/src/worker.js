@@ -11,11 +11,17 @@ import { onShutdownSignal } from './core/lifecycle/shutdown.js';
 import { createLogger } from './core/logging/logger.js';
 import { createFileStore } from './core/files/storage.js';
 import { createMailer } from './core/mail/mailer.js';
-import { createWorker, QUEUES } from './core/queue/queues.js';
+import { createMandrill } from './core/mail/mandrill.js';
+import { createQueue, createWorker, QUEUES } from './core/queue/queues.js';
 import { createRedisClient } from './core/redis/client.js';
 import { createAuthRepository } from './modules/auth/auth.repository.js';
 import { createAttachmentResultsHandler } from './modules/campaigns/jobs/attachment-results.job.js';
 import { createImportResultsHandler } from './modules/contacts/jobs/import-results.job.js';
+import { createQuotasRepository } from './modules/quotas/quotas.repository.js';
+import { createQuotasService } from './modules/quotas/quotas.service.js';
+import { createSender } from './modules/sending/sender.service.js';
+import { createSendingRepository } from './modules/sending/sending.repository.js';
+import { createSync } from './modules/sending/sync.service.js';
 import { createTemplateResultsHandler } from './modules/templates/jobs/template-results.job.js';
 import { createAccountValidityJob } from './modules/users/jobs/account-validity.job.js';
 import { createAdReviewJob } from './modules/users/jobs/ad-review.job.js';
@@ -59,8 +65,35 @@ const fileResults = createWorker(QUEUES.fileResults, async (job) => {
 }, config.redis);
 fileResults.on('failed', (job, error) => logger.error({ kind: job?.data.kind, fileId: job?.data.fileId, err: error }, 'file result failed'));
 
+// Campaign sending and event synchronization (ADR-005, ADR-024). Without the
+// campaign API key nothing is sent: campaigns stay approved and test sends
+// fail with a clear reason.
+const mailer = createMailer(config.mail, logger);
+const sendQueue = createQueue(QUEUES.send, config.redis);
+const mandrill = createMandrill(config.sending);
+const sender = createSender({
+  pool, repository: createSendingRepository(), quotas: createQuotasService({ db: pool, repository: createQuotasRepository(), audit }),
+  mandrill, store, audit, sendQueue, mailer, logger, batchSize: config.sending.batchSize,
+});
+const sendWorker = createWorker(QUEUES.send, async (job) => {
+  if (job.data.kind === 'test_send') {
+    return config.sending.enabled ? sender.testSend(job.data.testSendId) : sender.rejectTestSend(job.data.testSendId, 'sending_not_configured');
+  }
+  if (job.data.kind === 'batch') return config.sending.enabled ? sender.sendBatch(job.data.batchId) : null;
+  throw new Error(`unknown send job: ${job.data.kind}`);
+}, config.redis);
+sendWorker.on('failed', (job, error) => logger.error({ kind: job?.data.kind, err: error }, 'send job failed'));
+if (config.sending.enabled) {
+  const sync = createSync({ pool, repository: createSendingRepository(), mandrill, audit, logger });
+  await scheduler.every('dispatch', 30 * 1000, async () => ({ ...await sender.dispatch(), ...await sender.reconcile() }));
+  await scheduler.every('sync', 10 * 60 * 1000, () => sync.run());
+} else {
+  logger.warn('campaign sending disabled: MANDRILL_CAMPAIGNS_API_KEY not configured');
+}
+
 onShutdownSignal(logger, async () => {
   scheduler.stop();
+  await Promise.allSettled([sendWorker.close(), sendQueue.close()]);
   await fileResults.close();
   await Promise.allSettled([pool.end(), redis.quit()]);
 });

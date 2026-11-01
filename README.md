@@ -107,6 +107,8 @@ La lista completa, con valores de ejemplo, está en [.env.example](.env.example)
 | `AD_ENABLED` | No | `true` habilita el login con AD (por defecto `false`) y exige las `LDAP_*` |
 | `LDAP_URL`, `LDAP_CA_CERT(_FILE)`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD(_FILE)`, `LDAP_BASE_DN`, `LDAP_ALLOWED_GROUP_DN` | Con AD | Solo `ldaps://`; CA interna; cuenta de servicio de solo lectura; grupo habilitado |
 | `MANDRILL_SYSTEM_API_KEY(_FILE)`, `MAIL_FROM` | No | Correo del sistema (recuperación de contraseña); sin la key el correo queda deshabilitado |
+| `MANDRILL_CAMPAIGNS_API_KEY(_FILE)` | No | Solo el worker: envío de campañas y sincronización de eventos (ADR-024); sin la key no se envía nada |
+| `MANDRILL_API_URL`, `SENDING_BATCH_SIZE` | No | API de Mandrill (por defecto `https://mandrillapp.com/api/1.0`) y destinatarios por lote (100) |
 
 ## Verificación (`npm run check`)
 

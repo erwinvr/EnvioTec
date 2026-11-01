@@ -3,7 +3,7 @@ import { areaScopeFor } from '../../core/authorization/area-scope.js';
 import { assertRecentReauth } from '../../core/authorization/authorization.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { ConflictError, NotFoundError } from '../../core/errors/errors.js';
-import { adjusted, assertWithinCap, available, consumed, released, reserved } from './quotas.rules.js';
+import { adjusted, assertWithinCap, available, consumed, refunded, released, reserved } from './quotas.rules.js';
 
 // Send quotas (Parte B, ADR-011). Without areas.view_all a user sees only
 // their own quota; administrators adjust with quotas.manage, a reason and a
@@ -95,6 +95,16 @@ export function createQuotasService({ db, repository, audit }) {
         userId, kind: 'consume', amount, change: (q) => consumed(q, amount, { fromReserve }), campaignId, actor, context,
       });
       await repository.addToMonth(client, month.month, amount);
+      return after;
+    },
+
+    // Gives back what Mandrill did not accept, in the quota and in the month.
+    async refund(client, { userId, amount, campaignId, toReserve = true, actor, context }) {
+      const month = await repository.lockMonth(client);
+      const after = await apply(client, {
+        userId, kind: 'refund', amount, change: (q) => refunded(q, amount, { toReserve }), campaignId, actor, context,
+      });
+      await repository.addToMonth(client, month.month, -Math.min(amount, month.sent));
       return after;
     },
   };

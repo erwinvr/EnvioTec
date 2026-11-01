@@ -58,6 +58,14 @@ export function createSuppressionsRepository() {
           RETURNING id`,
         [email],
       );
+      // Campaign snapshots too (8.4): the message id and the events stay
+      // under the pseudonymous recipient id; nothing pending is sent.
+      await db.query(
+        `UPDATE campaign_recipients SET email = 'anon-' || id || '@anonimizado.invalid', first_name = NULL, last_name = NULL,
+                attributes = '{}', status = CASE WHEN status = 'pending' THEN 'suppressed' ELSE status END
+          WHERE email = $1`,
+        [email],
+      );
       const { rows: hash } = await db.query(
         `INSERT INTO suppressions (email_hash, email, reason, source)
          VALUES (${HASH}, NULL, 'anonymized', 'anonymization')

@@ -139,12 +139,12 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 | ID | Riesgo | Resolución prevista | Estado |
 | --- | --- | --- | --- |
-| R1 | Polling a Mandrill: retención (30 días según el negocio), límites de `messages/info` y `messages/search`, falta de ID propio por evento | Spike de la fase 0.5; clave de idempotencia derivada (mensaje, tipo, timestamp, URL) | Abierto |
+| R1 | Polling a Mandrill: retención (30 días según el negocio), límites de `messages/info` y `messages/search`, falta de ID propio por evento | Spike de la fase 0.5; clave de idempotencia derivada (mensaje, tipo, timestamp, URL); búsqueda por lote si se llega al límite de 1000 resultados | Implementado contra el doble; validar en el spike (ADR-024) |
 | R2 | Ancho de banda del adjunto | Envío por lotes con `merge_vars` por destinatario; confirmar en el spike que hay un `_id` por destinatario | Abierto |
-| R3 | Envío duplicado por timeout tras aceptación | Estado `ambiguous` en `send_batches` y conciliación por metadata antes de reintentar | Abierto |
+| R3 | Envío duplicado por timeout tras aceptación | Estado `ambiguous` en `send_batches` y conciliación por metadata antes de reintentar | Implementado (ADR-024); validar la búsqueda por metadata en el spike |
 | R4 | Baja con un clic (RFC 8058) alojada por Mandrill | Verificar en el spike | Abierto |
 | R5 | Fidelidad de la conversión de Word a HTML de correo | Acordar con el negocio el formato soportado; la vista previa muestra el resultado real | Abierto |
-| R6 | Escape de variables en el lenguaje de merge de Mandrill | Verificar en el spike (ADR-013) | Abierto |
+| R6 | Escape de variables en el lenguaje de merge de Mandrill | EnvioTec escapa una vez y usa triple llave; verificar en el spike (ADR-013, ADR-024) | Implementado; validar en el spike |
 | R7 | Librerías XLSX con problemas de seguridad | Solo CSV en la v1 | Resuelto |
 | R8 | Inspección de PDFs esquivable con object streams o nombres escapados | Normalizar con qpdf antes de inspeccionar; si qpdf falla, se rechaza | Resuelto (ADR-004) |
 | R9 | Bloqueo de cuentas de AD desde EnvioTec | Corte a los 2 intentos, 15 minutos | Resuelto |
@@ -445,5 +445,28 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 **Pendiente para fases siguientes:**
 
-- Entrega real de campañas y pruebas por Mandrill (8.5).
+- Entrega real de campañas y pruebas por Mandrill (8.5, hecho).
 
+
+### Fase 8.5 — Envío y sincronización (2026-11-01)
+
+**Controles implementados y verificados por tests:**
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| Parte B (supresión) | La supresión se aplica de nuevo en cada lote, antes de enviar: quien se dio de baja después de la aprobación no recibe la campaña | `integration/sending.test.js` |
+| ADR-011 (cuota) | Consumo por lote con bloqueo de fila, desde lo reservado; devolución (`refund`) de lo que Mandrill no acepta o no recibe; liberación del sobrante al terminar | `sending.test.js` |
+| Parte B (tope global) | Al alcanzar el tope del mes, la campaña pasa a pausa, se audita y se avisa a `notifications.admin_emails` | `sending.test.js` |
+| R3 (duplicados) | Un timeout después de enviar deja el lote `ambiguous`: no se reintenta a ciegas, se concilia por `u_batch_id` antes de reenviar | `sending.test.js` |
+| A8 (entrada externa) | Toda respuesta de Mandrill se valida contra un schema; una respuesta inesperada se trata como resultado incierto | `unit/sending.test.js` |
+| ADR-013 (inyección en la plantilla) | Valores escapados por EnvioTec e insertados con triple llave; caracteres de control eliminados; ningún valor se evalúa como plantilla | `unit/sending.test.js`, `sending.test.js` |
+| Privacidad | `preserve_recipients: false`: ningún destinatario ve a los demás | `unit/sending.test.js`, `sending.test.js` |
+| Parte B (sincronización) | Eventos guardados localmente, de forma idempotente; rebotes duros, quejas, bajas y la lista de rechazos de Mandrill pasan a la supresión global | `sending.test.js` |
+| A2 (egreso) | La key de campañas la recibe solo el worker; sin key no se envía nada; la URL de la API solo admite `http:` hacia loopback y fuera de producción | `unit/config.test.js`, revisión |
+| Auditoría | Inicio, lote enviado o fallido, conciliación, pausa por tope, finalización, entrega de prueba y sincronización | `sending.test.js` |
+| Parte B (anonimización) | Corrección de un hueco de la 8.4: la anonimización también borra los datos personales de las copias en `campaign_recipients`, y un destinatario pendiente queda suprimido; el ID del mensaje y los eventos se conservan con el ID seudónimo | `sending.test.js` |
+
+**Pendiente:**
+
+- Spike 0.5 con la API key real: R1, R2, R3, R4 (baja con un clic) y R6. Hasta entonces, ningún correo real sale de EnvioTec.
+- Reportes por campaña y por contacto (8.6).

@@ -100,8 +100,25 @@ function checkSemantics(raw, problems) {
       if (raw[key] === undefined) problems.push(`${key}: es obligatoria cuando AD_ENABLED=true`);
     }
   }
+  // Mandrill only over HTTPS; plain HTTP is accepted for a loopback test
+  // double, never in production.
+  if (raw.MANDRILL_API_URL !== undefined) {
+    const loopback = isLoopbackHttp(raw.MANDRILL_API_URL);
+    if (!/^https:\/\/[^/]+/.test(raw.MANDRILL_API_URL) && !(loopback && raw.NODE_ENV !== 'production')) {
+      problems.push('MANDRILL_API_URL: debe ser https');
+    }
+  }
   if (raw.MANDRILL_SYSTEM_API_KEY !== undefined && raw.MAIL_FROM === undefined) {
     problems.push('MAIL_FROM: es obligatoria cuando se define MANDRILL_SYSTEM_API_KEY');
+  }
+}
+
+function isLoopbackHttp(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -191,6 +208,14 @@ function buildConfig(raw) {
     config.mail = raw.MANDRILL_SYSTEM_API_KEY !== undefined
       ? { enabled: true, apiKey: raw.MANDRILL_SYSTEM_API_KEY, from: raw.MAIL_FROM, fromName: raw.MAIL_FROM_NAME }
       : { enabled: false };
+  }
+  if (raw.MANDRILL_API_URL !== undefined && raw.SENDING_BATCH_SIZE !== undefined) {
+    config.sending = {
+      enabled: raw.MANDRILL_CAMPAIGNS_API_KEY !== undefined,
+      apiKey: raw.MANDRILL_CAMPAIGNS_API_KEY,
+      apiUrl: raw.MANDRILL_API_URL.replace(/\/$/, ''),
+      batchSize: raw.SENDING_BATCH_SIZE,
+    };
   }
   if (raw.FILES_DIR !== undefined) config.files = { dir: raw.FILES_DIR };
   if (raw.CLAMAV_HOST !== undefined) config.clamav = { host: raw.CLAMAV_HOST, port: raw.CLAMAV_PORT };

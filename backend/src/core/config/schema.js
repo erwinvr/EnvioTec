@@ -43,6 +43,10 @@ export const PROPERTIES = {
   MANDRILL_SYSTEM_API_KEY: { type: 'string', minLength: 10, maxLength: 200 },
   MAIL_FROM: { type: 'string', pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$', maxLength: 254 },
   MAIL_FROM_NAME: { type: 'string', minLength: 1, maxLength: 100, default: 'EnvioTec' },
+  // Campaign sending (ADR-005): its own API key, separate from system mail.
+  MANDRILL_CAMPAIGNS_API_KEY: { type: 'string', minLength: 10, maxLength: 200 },
+  MANDRILL_API_URL: { type: 'string', default: 'https://mandrillapp.com/api/1.0' },
+  SENDING_BATCH_SIZE: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
   FILES_DIR: { type: 'string', pattern: '^/[A-Za-z0-9/_.-]+$', default: '/data/files' },
   CLAMAV_HOST: { type: 'string', pattern: '^[A-Za-z0-9.-]+$', default: 'clamav' },
   CLAMAV_PORT: { type: 'integer', minimum: 1, maximum: 65535, default: 3310 },
@@ -55,7 +59,7 @@ export const LDAP_KEYS = ['LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND
 // Variables that may come from a Docker secret file (<NAME>_FILE).
 export const SECRET_KEYS = new Set([
   'DATABASE_URL', 'MIGRATION_DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY',
-  'LDAP_BIND_PASSWORD', 'LDAP_CA_CERT', 'MANDRILL_SYSTEM_API_KEY',
+  'LDAP_BIND_PASSWORD', 'LDAP_CA_CERT', 'MANDRILL_SYSTEM_API_KEY', 'MANDRILL_CAMPAIGNS_API_KEY',
 ]);
 
 // Each process receives only the variables it needs (least privilege).
@@ -80,6 +84,7 @@ export const PROFILES = {
       'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS',
       'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
       'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME', 'FILES_DIR',
+      'MANDRILL_CAMPAIGNS_API_KEY', 'MANDRILL_API_URL', 'SENDING_BATCH_SIZE',
     ],
   },
   // Untrusted file inspection (ADR-004): no database, only Redis and ClamAV.

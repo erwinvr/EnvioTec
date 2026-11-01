@@ -48,6 +48,13 @@ export function consumed(quota, amount, { fromReserve = true } = {}) {
   return { ...quota, consumed: quota.consumed + amount };
 }
 
+// What was consumed for a send that Mandrill did not accept goes back to
+// where it came from (the reservation, or the balance for test sends).
+export function refunded(quota, amount, { toReserve = true } = {}) {
+  if (!Number.isInteger(amount) || amount <= 0 || amount > quota.consumed) throw new ConflictError('No hay tanto consumido para devolver');
+  return { ...quota, consumed: quota.consumed - amount, reserved: toReserve ? quota.reserved + amount : quota.reserved };
+}
+
 export function assertWithinCap(sent, amount, cap) {
   if (sent + amount > cap) throw new GlobalCapReachedError();
 }

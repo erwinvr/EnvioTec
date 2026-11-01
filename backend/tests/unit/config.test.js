@@ -99,6 +99,17 @@ describe('loadConfig', () => {
     }, { profile: 'worker' });
     assert.equal(config.security, undefined);
     assert.equal(config.port, undefined);
+    assert.deepEqual([config.sending.enabled, config.sending.apiUrl, config.sending.batchSize], [false, 'https://mandrillapp.com/api/1.0', 100]);
+  });
+
+  it('la API de Mandrill solo por https; http únicamente hacia loopback y fuera de producción', () => {
+    const worker = (env) => loadConfig({
+      NODE_ENV: 'development', DATABASE_URL: 'postgres://app_runtime:pw@db/enviotec', REDIS_URL: 'redis://worker:pw@redis:6379/0', ...env,
+    }, { profile: 'worker' });
+    assert.equal(worker({ MANDRILL_API_URL: 'http://127.0.0.1:9999/', MANDRILL_CAMPAIGNS_API_KEY: 'clave-de-campanias-de-prueba' }).sending.apiUrl, 'http://127.0.0.1:9999');
+    assert.equal(worker({ MANDRILL_CAMPAIGNS_API_KEY: 'clave-de-campanias-de-prueba' }).sending.enabled, true);
+    assert.throws(() => worker({ MANDRILL_API_URL: 'http://mandrill.evil.test' }), /MANDRILL_API_URL/);
+    assert.throws(() => worker({ NODE_ENV: 'production', MANDRILL_API_URL: 'http://127.0.0.1:9999' }), /MANDRILL_API_URL/);
   });
 
   it('rechaza perfiles desconocidos', () => {
