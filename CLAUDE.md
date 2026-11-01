@@ -9,7 +9,7 @@ Estos dos documentos son la especificación obligatoria. Se cargan completos en 
 @docs/baseline.md
 @docs/project-spec.md
 
-- `docs/baseline.md`: Parte A (baseline de seguridad, stack y arquitectura) y Parte C (metodología por fases). No se modifica sin mi aprobación explícita.
+- `docs/baseline.md`: núcleo de la Parte A y la Parte C; el detalle está en `docs/baseline/*.md`, que tienen la misma autoridad y se leen según la tabla de punteros. Ninguno se modifica sin mi aprobación explícita.
 - `docs/project-spec.md`: Parte B (ficha de EnvioTec, controles específicos, usuarios locales y de AD, vigencia de cuentas, preguntas pendientes).
 
 Si algo de la Parte B contradice la Parte A, detente, explica el conflicto y propón cómo resolverlo antes de seguir.
