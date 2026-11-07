@@ -10,6 +10,8 @@ import { dataTable } from '../../components/data-table.js';
 import { badge, button, pageHeader, section } from '../../components/page.js';
 import { toast } from '../../components/toast.js';
 import { saveResponse } from '../download.js';
+import { openMapping } from './import-mapping.js';
+import { variablesSection, variableTag } from './list-variables.js';
 
 const POLL_MS = 2000;
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -21,6 +23,9 @@ export async function render(container, { params }) {
   const list = result.data;
   const can = (code) => auth.hasPermission(code);
   let pollTimer = null;
+  // The import just uploaded: its mapping opens as soon as the preview is ready.
+  let awaitingPreview = null;
+  const reload = () => render(container, { params });
 
   const contacts = dataTable({
     load: (query) => api.get(`/api/v1/lists/${list.id}/contacts`, query),
@@ -29,7 +34,7 @@ export async function render(container, { params }) {
       { key: 'email', label: t('users.email'), render: (c) => el('span', {}, [c.email, c.suppressed ? badge(t('contacts.suppressed'), 'warning') : null]) },
       { key: 'firstName', label: t('contacts.firstName') },
       { key: 'lastName', label: t('contacts.lastName') },
-      ...list.attributes.map((name) => ({ key: `attr_${name}`, label: name, render: (c) => c.attributes[name] ?? '' })),
+      ...list.variables.map((v) => ({ key: `attr_${v.name}`, label: v.label, render: (c) => c.attributes[v.name] ?? '' })),
       {
         key: 'actions', label: '', render: (c) => (c.anonymized ? badge(t('contacts.anonymized')) : el('span', { className: 'actions' }, [
           can('contacts.update') ? button(t('common.edit'), () => editContact(c)) : null,
@@ -42,12 +47,16 @@ export async function render(container, { params }) {
     ],
   });
 
-  const statusKind = (status) => ({ completed: 'ok', failed: 'warning' })[status] ?? '';
+  const statusKind = (status) => ({ completed: 'ok', failed: 'warning', awaiting_mapping: 'warning' })[status] ?? '';
   function importResult(row) {
     if (row.status === 'failed') return known(`imports.reasons.${row.failureReason}`, row.failureReason);
     if (row.status === 'completed') return t('imports.summary', { inserted: row.inserted, updated: row.updated, rejected: row.rejected });
-    return '…';
+    if (row.status === 'awaiting_mapping' && row.header) {
+      return can('contacts.import') ? button(t('imports.map'), () => openMapping(row, list, afterImportChange), { kind: 'primary' }) : t('imports.awaiting');
+    }
+    return t('imports.analyzing');
   }
+  const inProgress = (row) => row.status === 'pending' || (row.status === 'awaiting_mapping' && !row.header);
   const imports = dataTable({
     load: () => api.get(`/api/v1/lists/${list.id}/imports`),
     columns: [
@@ -67,10 +76,11 @@ export async function render(container, { params }) {
   function editContact(contact) {
     const form = createForm({
       fields: [
-        { name: 'email', label: t('users.email'), type: 'email', required: true, maxLength: 254, value: contact?.email },
-        { name: 'firstName', label: t('contacts.firstName'), maxLength: 100, value: contact?.firstName ?? '' },
-        { name: 'lastName', label: t('contacts.lastName'), maxLength: 100, value: contact?.lastName ?? '' },
-        ...list.attributes.map((name) => ({ name: `attr_${name}`, label: name, maxLength: 500, value: contact?.attributes[name] ?? '' })),
+        // Each field shows the variable a template uses for it (ADR-028).
+        { name: 'email', label: t('contacts.email'), type: 'email', required: true, maxLength: 254, value: contact?.email, hint: variableTag('email') },
+        { name: 'firstName', label: t('contacts.firstName'), maxLength: 100, value: contact?.firstName ?? '', hint: variableTag('first_name') },
+        { name: 'lastName', label: t('contacts.lastName'), maxLength: 100, value: contact?.lastName ?? '', hint: variableTag('last_name') },
+        ...list.variables.map((v) => ({ name: `attr_${v.name}`, label: v.label, maxLength: 500, value: contact?.attributes[v.name] ?? '', hint: variableTag(v.name) })),
       ],
       submitLabel: t('common.save'),
       onSubmit: async (values) => {
@@ -87,14 +97,25 @@ export async function render(container, { params }) {
     const modal = openModal({ title: contact ? t('contacts.edit') : t('contacts.create'), content: form.element });
   }
 
-  // Refreshes the imports while one is pending; stops when the page changes.
+  function afterImportChange() {
+    imports.refresh();
+    poll();
+  }
+
+  // Refreshes the imports while one is being analyzed or loaded; stops when
+  // the page changes. Opens the mapping of the upload when its preview is ready.
   function poll() {
     clearTimeout(pollTimer);
     pollTimer = setTimeout(async () => {
       if (!window.location.hash.startsWith(`#/contactos/${list.id}`)) return;
       const latest = await api.get(`/api/v1/lists/${list.id}/imports`).catch(() => null);
       imports.refresh();
-      if (latest?.data.some((i) => i.status === 'pending')) poll();
+      const ready = latest?.data.find((i) => i.id === awaitingPreview && i.status === 'awaiting_mapping' && i.header);
+      if (ready) {
+        awaitingPreview = null;
+        openMapping(ready, list, afterImportChange);
+      }
+      if (latest?.data.some(inProgress)) poll();
       else contacts.refresh();
     }, POLL_MS);
   }
@@ -114,6 +135,7 @@ export async function render(container, { params }) {
     if (response) {
       toast(t('imports.queued'), 'success');
       fileInput.value = '';
+      awaitingPreview = response.data.id;
       imports.refresh();
       poll();
     }
@@ -128,11 +150,14 @@ export async function render(container, { params }) {
       }) : null,
     ]),
     list.description ? el('p', { text: list.description }) : null,
+    section(t('variables.title'), variablesSection(list, { canEdit: can('contacts.update'), onChange: reload })),
     section(t('nav.contacts'), contacts.element),
     can('contacts.import') ? section(t('imports.title'), [
-      el('p', { className: 'hint', text: t('imports.help', { columns: ['email', 'first_name', 'last_name', ...list.attributes].join(', ') }) }),
+      el('p', { className: 'hint', text: t('imports.help') }),
       el('div', { className: 'actions' }, [fileInput, button(t('imports.upload'), upload, { kind: 'primary' })]),
       imports.element,
     ]) : null,
   ]);
+  // An import may already be in progress when the page opens.
+  poll();
 }

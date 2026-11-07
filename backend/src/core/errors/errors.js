@@ -55,8 +55,8 @@ export class NotFoundError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message = 'Conflicto con el estado actual del recurso') {
-    super(message, { statusCode: 409, code: 'CONFLICT' });
+  constructor(message = 'Conflicto con el estado actual del recurso', { details } = {}) {
+    super(message, { statusCode: 409, code: 'CONFLICT', details });
   }
 }
 

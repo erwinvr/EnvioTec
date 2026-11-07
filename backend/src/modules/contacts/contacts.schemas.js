@@ -19,10 +19,19 @@ export const createListBody = object({
   name: { type: 'string', minLength: 2, maxLength: 100, pattern: '\\S' },
   description: { type: 'string', maxLength: 500 },
   attributes: { type: 'array', maxItems: 30, uniqueItems: true, items: attributeName },
+  variables: { type: 'array', maxItems: 30, items: object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']) },
 }, ['name']);
 export const updateListBody = object({
-  name: createListBody.properties.name, description: createListBody.properties.description, attributes: createListBody.properties.attributes,
+  name: createListBody.properties.name, description: createListBody.properties.description,
 }, [], { minProperties: 1 });
+// Variables of a list (ADR-028).
+export const variableParams = object({ id: uuid, name: attributeName }, ['id', 'name']);
+export const variableBody = object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']);
+export const variableLabelBody = object({ label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']);
+// One target per CSV column: a fixed field, a variable, or null (skip).
+export const mappingBody = object({
+  mapping: { type: 'array', minItems: 1, maxItems: 50, items: { anyOf: [{ type: 'null' }, attributeName] } },
+}, ['mapping']);
 export const contactsQuery = object({ ...paging, search: { type: 'string', minLength: 1, maxLength: 100 } });
 export const createContactBody = object({
   email: { type: 'string', minLength: 3, maxLength: 254 },
@@ -35,7 +44,8 @@ export const updateContactBody = object(createContactBody.properties, [], { minP
 const list = object({
   id: { type: 'string' }, areaId: { type: 'string' }, areaName: { type: 'string' }, name: { type: 'string' },
   description: { type: 'string' }, attributes: { type: 'array', items: { type: 'string' } }, contactCount: int,
-}, ['id', 'areaId', 'areaName', 'name', 'description', 'attributes', 'contactCount']);
+  variables: { type: 'array', items: object({ name: { type: 'string' }, label: { type: 'string' } }, ['name', 'label']) },
+}, ['id', 'areaId', 'areaName', 'name', 'description', 'attributes', 'contactCount', 'variables']);
 const contact = object({
   id: { type: 'string' }, listId: { type: 'string' }, email: { type: 'string' }, firstName: nullable, lastName: nullable,
   attributes: { type: 'object', additionalProperties: { type: 'string' } }, anonymized: { type: 'boolean' }, suppressed: { type: 'boolean' },
@@ -45,6 +55,9 @@ const importRow = object({
   status: { type: 'string' }, totalRows: nullableInt, inserted: nullableInt, updated: nullableInt, rejected: nullableInt,
   errors: { type: 'array', items: object({ row: int, field: { type: 'string' }, code: { type: 'string' } }) },
   failureReason: nullable, createdBy: { type: 'string' }, createdAt: { type: 'string' }, finishedAt: nullable,
+  header: { type: ['array', 'null'], items: { type: 'string' } },
+  sample: { type: ['array', 'null'], items: { type: 'array', items: { type: 'string' } } },
+  mapping: { type: ['array', 'null'], items: { type: ['string', 'null'] } },
 }, ['id', 'listId', 'originalName', 'sizeBytes', 'sha256', 'status', 'totalRows', 'inserted', 'updated', 'rejected', 'errors',
   'failureReason', 'createdBy', 'createdAt', 'finishedAt']);
 

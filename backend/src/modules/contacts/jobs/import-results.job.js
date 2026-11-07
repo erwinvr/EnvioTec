@@ -58,3 +58,51 @@ export function createImportResultsHandler({ pool, store, audit, logger }) {
     }
   };
 }
+
+// Outcome of the preview (ADR-028): the header and sample are stored for
+// the user to map columns; the upload stays in quarantine. A rejected file
+// (malware, not text, empty) ends the import here.
+export function createImportPreviewHandler({ pool, audit }) {
+  const repository = createContactsRepository();
+  return async function handle({ fileId, outcome }) {
+    await withTransaction(pool, async (client) => {
+      const pending = await repository.previewImportByFile(client, fileId);
+      if (!pending) return;
+      if (outcome.status === 'ok') {
+        await repository.setPreview(client, pending.id, outcome);
+        return;
+      }
+      await repository.finishImport(client, pending.id, { status: 'failed', failureReason: outcome.reason, errors: [] });
+      await audit.record(client, {
+        actor: { type: 'system' }, action: 'contacts.import', resourceType: 'contact_import', resourceId: pending.id, result: 'failure',
+        context: { requestId: `job:contacts-preview:${pending.id}` },
+        metadata: { listId: pending.list_id, requestedBy: pending.created_by, reason: outcome.reason, signature: outcome.signature ?? null },
+      });
+    });
+  };
+}
+
+// Imports left waiting for their mapping expire after 24 hours: the file in
+// quarantine is deleted and the import ends as failed (audited).
+export const MAPPING_EXPIRY_HOURS = 24;
+
+export function createImportExpiryJob({ pool, store, audit, logger }) {
+  const repository = createContactsRepository();
+  return async function run() {
+    const expired = await withTransaction(pool, async (client) => {
+      const rows = await repository.expiredAwaitingImports(client, MAPPING_EXPIRY_HOURS);
+      for (const row of rows) {
+        await repository.finishImport(client, row.id, { status: 'failed', failureReason: 'mapping_expired' });
+        await audit.record(client, {
+          actor: { type: 'system' }, action: 'contacts.import', resourceType: 'contact_import', resourceId: row.id, result: 'failure',
+          context: { requestId: `job:import-expiry:${row.id}` }, metadata: { listId: row.list_id, requestedBy: row.created_by, reason: 'mapping_expired' },
+        });
+      }
+      return rows;
+    });
+    for (const row of expired) {
+      await store.remove('incoming', row.file_id).catch((error) => logger.warn({ errorMessage: error.message }, 'could not remove an expired upload'));
+    }
+    return { expired: expired.length };
+  };
+}

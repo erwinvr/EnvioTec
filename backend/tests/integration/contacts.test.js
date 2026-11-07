@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, describe, it } from 'node:test';
+import { createAuditService } from '../../src/core/audit/audit.service.js';
+import { createFileStore } from '../../src/core/files/storage.js';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
+import { createImportExpiryJob } from '../../src/modules/contacts/jobs/import-results.job.js';
 import { createHarness, multipart } from '../helpers/auth-fixtures.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
@@ -22,13 +25,25 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
   let otherArea;
   const call = (method, url, payload, token = operator) => h.request(method, url, { token, payload });
 
+  // Until the step ends: the preview is ready (header) or the import finished.
   async function waitImport(id, token = operator) {
     for (let i = 0; i < 120; i += 1) {
-      const res = await call('GET', `/api/v1/imports/${id}`, undefined, token);
-      if (res.json().data.status !== 'pending') return res.json().data;
+      const data = (await call('GET', `/api/v1/imports/${id}`, undefined, token)).json().data;
+      if (data.status === 'completed' || data.status === 'failed' || (data.status === 'awaiting_mapping' && data.header)) return data;
       await sleep(500);
     }
     throw new Error('import still pending');
+  }
+
+  // Upload, wait for the preview, map the columns and wait for the result (ADR-028).
+  async function importCsv(listId, csv, mapping) {
+    const res = await h.request('POST', `/api/v1/lists/${listId}/imports`, { token: operator, ...multipart('contactos.csv', csv) });
+    assert.equal(res.statusCode, 202, res.body);
+    const preview = await waitImport(res.json().data.id);
+    if (preview.status !== 'awaiting_mapping') return preview;
+    const mapped = await call('POST', `/api/v1/imports/${preview.id}/mapping`, { mapping });
+    assert.equal(mapped.statusCode, 200, mapped.body);
+    return waitImport(preview.id);
   }
 
   before(async () => {
@@ -48,13 +63,14 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     await h?.close();
   });
 
-  it('listas con atributos validados; otra área no se ve (IDOR)', async () => {
-    const created = await call('POST', '/api/v1/lists', { name: 'Clientes', attributes: ['ciudad', 'plan'] });
+  it('listas con variables validadas; otra área no se ve (IDOR)', async () => {
+    const created = await call('POST', '/api/v1/lists', { name: 'Clientes', variables: [{ label: 'Ciudad' }, { label: 'Plan', name: 'plan' }] });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().data.areaId, h.areaId);
+    assert.deepEqual(created.json().data.variables, [{ name: 'ciudad', label: 'Ciudad' }, { name: 'plan', label: 'Plan' }]);
     assert.equal((await call('POST', '/api/v1/lists', { name: 'Mala', attributes: ['Email'] })).statusCode, 422);
     const reserved = await call('POST', '/api/v1/lists', { name: 'Mala', attributes: ['email'] });
-    assert.equal(reserved.json().error.details[0].code, 'reserved_attribute', 'nombre reservado');
+    assert.equal(reserved.json().error.details[0].code, 'reserved_variable', 'nombre reservado');
     assert.equal((await call('POST', '/api/v1/lists', { name: 'Ajena', areaId: otherArea })).json().error.details[0].code, 'invalid_area');
     const { rows } = await h.owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-ajena`]);
     assert.equal((await call('GET', `/api/v1/lists/${rows[0].id}`)).statusCode, 404);
@@ -76,33 +92,69 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     assert.equal((await call('DELETE', `/api/v1/contacts/${id}`)).statusCode, 200);
   });
 
-  it('importación CSV de punta a punta: antivirus, validación por fila, deduplicación y upsert', async () => {
-    const list = (await call('POST', '/api/v1/lists', { name: 'Importada', attributes: ['ciudad'] })).json().data;
+  it('variables de la lista: etiqueta editable, nombres reservados y no se borra una con datos (ADR-028)', async () => {
+    const list = (await call('POST', '/api/v1/lists', { name: 'Con variables' })).json().data;
+    const added = await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Número de póliza' });
+    assert.equal(added.statusCode, 201, added.body);
+    assert.deepEqual(added.json().data.variables, [{ name: 'numero_de_poliza', label: 'Número de póliza' }]);
+    assert.equal((await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Nombre' })).json().error.details[0].code, 'reserved_variable');
+    assert.equal((await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Otra', name: 'numero_de_poliza' })).statusCode, 409);
+    const relabeled = await call('PATCH', `/api/v1/lists/${list.id}/variables/numero_de_poliza`, { label: 'Póliza' });
+    assert.equal(relabeled.json().data.variables[0].label, 'Póliza');
+    await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Sin uso' });
+    assert.equal((await call('DELETE', `/api/v1/lists/${list.id}/variables/sin_uso`)).statusCode, 200);
+    await call('POST', `/api/v1/lists/${list.id}/contacts`, { email: 'p@empresa.test', attributes: { numero_de_poliza: '123' } });
+    const inUse = await call('DELETE', `/api/v1/lists/${list.id}/variables/numero_de_poliza`);
+    assert.equal(inUse.statusCode, 409);
+    assert.equal(inUse.json().error.details[0].code, 'variable_in_use');
+    assert.equal((await call('PATCH', `/api/v1/lists/${list.id}`, { attributes: [] })).statusCode, 422, 'las variables no se cambian por PATCH de la lista');
+    assert.equal((await h.audits('list.variable_add', list.id)).length, 2);
+  });
+
+  it('importación CSV en dos pasos: vista previa, asociación de columnas, deduplicación y upsert', async () => {
+    const list = (await call('POST', '/api/v1/lists', { name: 'Importada', variables: [{ label: 'Ciudad' }] })).json().data;
     await call('POST', `/api/v1/lists/${list.id}/contacts`, { email: 'existente@empresa.test', firstName: 'Viejo' });
-    const csv = 'email;first_name;ciudad\nexistente@empresa.test;Nuevo;Sucre\nnuevo@empresa.test;Nuevo;La Paz\nmalo;X;Y\nNUEVO@empresa.test;Dup;Z\n';
-    const body = multipart('contactos.csv', csv);
-    const res = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...body });
-    assert.equal(res.statusCode, 202, res.body);
-    assert.equal(res.json().data.status, 'pending');
-    const done = await waitImport(res.json().data.id);
+    const csv = 'Correo;Nombre Cliente;Ciudad;Notas\nexistente@empresa.test;Nuevo;Sucre;x\nnuevo@empresa.test;Nuevo;La Paz;x\nmalo;X;Y;x\nNUEVO@empresa.test;Dup;Z;x\n';
+    const res = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('contactos.csv', csv) });
+    assert.equal(res.json().data.status, 'awaiting_mapping');
+    const preview = await waitImport(res.json().data.id);
+    assert.deepEqual(preview.header, ['Correo', 'Nombre Cliente', 'Ciudad', 'Notas']);
+    assert.equal(preview.sample.length, 3);
+    assert.equal((await call('POST', `/api/v1/imports/${preview.id}/mapping`, { mapping: ['first_name', null, null, null] })).json().error.details[0].code, 'missing_email_column');
+    assert.equal((await call('POST', `/api/v1/imports/${preview.id}/mapping`, { mapping: ['email', 'clave', null, null] })).json().error.details[0].code, 'unknown_target');
+    const mapped = await call('POST', `/api/v1/imports/${preview.id}/mapping`, { mapping: ['email', 'first_name', 'ciudad', null] });
+    assert.equal(mapped.json().data.status, 'pending');
+    assert.equal(mapped.json().data.sample, null, 'la muestra ya no se guarda');
+    const done = await waitImport(preview.id);
     assert.equal(done.status, 'completed', JSON.stringify(done));
     assert.deepEqual([done.totalRows, done.inserted, done.updated, done.rejected], [4, 1, 1, 2]);
     const contacts = (await call('GET', `/api/v1/lists/${list.id}/contacts`)).json().data;
-    assert.equal(contacts.find((c) => c.email === 'existente@empresa.test').firstName, 'Nuevo');
+    const existing = contacts.find((c) => c.email === 'existente@empresa.test');
+    assert.deepEqual([existing.firstName, existing.attributes.ciudad], ['Nuevo', 'Sucre']);
+    assert.equal((await h.audits('contacts.import_mapping', done.id)).length, 1);
     assert.equal((await h.audits('contacts.import', done.id))[0].result, 'success');
+    assert.equal((await call('POST', `/api/v1/imports/${preview.id}/mapping`, { mapping: ['email', null, null, null] })).statusCode, 409, 'una sola vez');
   });
 
-  it('importación: malware rechazado por ClamAV, columnas desconocidas y archivo no CSV', async () => {
+  it('importación: malware rechazado por ClamAV, archivo no CSV, cancelación y vencimiento sin asociar', async () => {
     const list = (await call('POST', '/api/v1/lists', { name: 'Riesgo' })).json().data;
-    const infected = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('virus.csv', EICAR) });
-    const failed = await waitImport(infected.json().data.id);
+    const failed = await importCsv(list.id, EICAR, ['email']);
     assert.deepEqual([failed.status, failed.failureReason], ['failed', 'malware']);
-    const unknown = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('x.csv', 'email,clave\na@b.test,1\n') });
-    assert.equal((await waitImport(unknown.json().data.id)).failureReason, 'unknown_columns');
     const pdf = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('x.pdf', '%PDF-1.4', 'application/pdf') });
     assert.equal(pdf.json().error.details[0].code, 'not_csv');
     const big = await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('big.csv', Buffer.alloc(10 * 1024 * 1024 + 10, 'a')) });
     assert.equal(big.statusCode, 413);
+
+    const toCancel = await waitImport((await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('c.csv', 'email\na@b.test\n') })).json().data.id);
+    const cancelled = await call('DELETE', `/api/v1/imports/${toCancel.id}`);
+    assert.deepEqual([cancelled.json().data.status, cancelled.json().data.failureReason], ['failed', 'cancelled']);
+    assert.equal((await call('POST', `/api/v1/imports/${toCancel.id}/mapping`, { mapping: ['email'] })).statusCode, 409);
+
+    const stale = await waitImport((await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('s.csv', 'email\na@b.test\n') })).json().data.id);
+    await h.owner.query("UPDATE contact_imports SET created_at = now() - interval '25 hours' WHERE id = $1", [stale.id]);
+    const job = createImportExpiryJob({ pool: h.pool, store: createFileStore(process.env.FILES_DIR ?? '/data/files'), audit: createAuditService(), logger: { warn() {} } });
+    assert.ok((await job()).expired >= 1);
+    assert.equal((await call('GET', `/api/v1/imports/${stale.id}`)).json().data.failureReason, 'mapping_expired');
   });
 
   it('exportación con fórmulas neutralizadas y auditada', async () => {

@@ -8,20 +8,33 @@ import { after, before, describe, it } from 'node:test';
 import { createClamav } from '../../src/core/files/clamav.js';
 import { createFileStore, FileTooLargeError } from '../../src/core/files/storage.js';
 import { maskEmail } from '../../src/core/privacy/mask.js';
-import { cleanValue, detectDelimiter, validateHeader, validateRow } from '../../src/modules/contacts/csv-rows.js';
-import { processContactsCsv } from '../../src/modules/contacts/files/contacts-csv.processor.js';
+import { cleanValue, detectDelimiter, previewCells, validateMapping, validateRow, variableNameFrom } from '../../src/modules/contacts/csv-rows.js';
+import { processContactsCsv, processContactsCsvPreview } from '../../src/modules/contacts/files/contacts-csv.processor.js';
+import { newVariable } from '../../src/modules/contacts/variables.service.js';
 import { normalizeContact, safeFileName } from '../../src/modules/contacts/contacts.service.js';
 
 const clean = { scan: async (stream) => { stream.resume(); await new Promise((resolve) => stream.on('end', resolve)); return { clean: true }; } };
 
 describe('reglas del CSV de contactos', () => {
-  it('detecta el delimitador y valida el encabezado contra los atributos de la lista', () => {
+  it('detecta el delimitador y valida la asociación de columnas contra las variables de la lista (ADR-028)', () => {
     assert.equal(detectDelimiter('email;first_name;ciudad'), ';');
     assert.equal(detectDelimiter('email,first_name'), ',');
-    assert.deepEqual(validateHeader([' Email ', 'FIRST_NAME', 'ciudad'], ['ciudad']), { columns: ['email', 'first_name', 'ciudad'] });
-    assert.deepEqual(validateHeader(['email', 'password'], []), { error: 'unknown_columns', columns: ['password'] });
-    assert.equal(validateHeader(['first_name'], []).error, 'missing_email_column');
-    assert.equal(validateHeader(['email', 'email'], []).error, 'duplicate_columns');
+    const header = ['Correo', 'Nombre Cliente', 'Ciudad', 'Notas'];
+    assert.deepEqual(validateMapping(['email', 'first_name', 'ciudad', null], header, ['ciudad']), { columns: ['email', 'first_name', 'ciudad', null] });
+    assert.equal(validateMapping(['email', 'clave', null, null], header, []).error, 'unknown_target');
+    assert.equal(validateMapping(['first_name', null, null, null], header, []).error, 'missing_email_column');
+    assert.equal(validateMapping(['email', 'email', null, null], header, []).error, 'duplicate_target');
+    assert.equal(validateMapping(['email'], header, []).error, 'mapping_length');
+    assert.deepEqual(previewCells([' a\u0007 ', 'x'.repeat(150)]), ['a', 'x'.repeat(100)]);
+  });
+
+  it('variables: nombre técnico desde la etiqueta, reservados y duplicados rechazados', () => {
+    assert.equal(variableNameFrom('Número de póliza'), 'numero_de_poliza');
+    assert.equal(variableNameFrom('2do apellido'), 'v_2do_apellido');
+    assert.deepEqual(newVariable({ label: ' Plan contratado ' }, []), { name: 'plan_contratado', label: 'Plan contratado' });
+    assert.throws(() => newVariable({ label: 'Nombre' }, []), (e) => e.details[0].code === 'reserved_variable');
+    assert.throws(() => newVariable({ label: 'Plan' }, ['plan']), (e) => e.statusCode === 409);
+    assert.throws(() => newVariable({ label: 'x', name: 'Mal-Nombre' }, []), (e) => e.details[0].code === 'invalid_variable_name');
   });
 
   it('valida cada fila y limpia caracteres de control', () => {
@@ -72,9 +85,20 @@ describe('almacenamiento privado y procesador de CSV', () => {
     assert.throws(() => store.pathOf('../', saved.id), /invalid file reference/);
   });
 
-  it('procesa filas válidas, duplicadas e inválidas, con ";" y BOM', async () => {
-    const saved = await upload('﻿email;first_name;ciudad\nana@b.test;Ana;La Paz\nANA@b.test;Otra;Sucre\nmalo;X;Y\nluis@b.test;Luis;\n');
-    const outcome = await processContactsCsv({ fileId: saved.id, attributes: ['ciudad'] }, { store, clamav: clean });
+  it('vista previa: encabezado y 3 filas de muestra; el archivo queda en cuarentena para la importación', async () => {
+    const saved = await upload('Correo;Nombre;Ciudad\na@b.test;Ana;La Paz\nb@b.test;Beto;Sucre\nc@b.test;Caro;Oruro\nd@b.test;Dani;Tarija\n');
+    const outcome = await processContactsCsvPreview({ fileId: saved.id }, { store, clamav: clean });
+    assert.deepEqual(outcome.header, ['Correo', 'Nombre', 'Ciudad']);
+    assert.equal(outcome.sample.length, 3);
+    assert.ok(await readFile(store.pathOf('incoming', saved.id)), 'sigue en cuarentena');
+    const wide = await upload(`${Array.from({ length: 51 }, (_, i) => `c${i}`).join(',')}\n`);
+    assert.equal((await processContactsCsvPreview({ fileId: wide.id }, { store, clamav: clean })).reason, 'too_many_columns');
+    await assert.rejects(readFile(store.pathOf('incoming', wide.id)), /ENOENT/, 'rechazado: se borra');
+  });
+
+  it('procesa filas válidas, duplicadas e inválidas, con ";", BOM y columnas que no se importan', async () => {
+    const saved = await upload('﻿Correo;Nombre;Ciudad;Notas\nana@b.test;Ana;La Paz;x\nANA@b.test;Otra;Sucre;x\nmalo;X;Y;x\nluis@b.test;Luis;;x\n');
+    const outcome = await processContactsCsv({ fileId: saved.id, attributes: ['ciudad'], mapping: ['email', 'first_name', 'ciudad', null] }, { store, clamav: clean });
     assert.deepEqual({ ...outcome, errors: undefined }, { status: 'ok', totalRows: 4, valid: 2, rejected: 2, errors: undefined });
     assert.deepEqual(outcome.errors.map((e) => e.code).sort(), ['duplicate_in_file', 'invalid_email']);
     const lines = (await readFile(store.pathOf('results', saved.id), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
@@ -84,9 +108,9 @@ describe('almacenamiento privado y procesador de CSV', () => {
 
   it('rechaza malware, columnas desconocidas, archivos binarios y vacíos', async () => {
     const infected = { scan: async (stream) => { stream.resume(); await new Promise((resolve) => stream.on('end', resolve)); return { clean: false, signature: 'Eicar-Test-Signature' }; } };
-    const run = async (text, clamav = clean) => processContactsCsv({ fileId: (await upload(text)).id, attributes: [] }, { store, clamav });
+    const run = async (text, clamav = clean, mapping = ['email']) => processContactsCsv({ fileId: (await upload(text)).id, attributes: [], mapping }, { store, clamav });
     assert.deepEqual(await run('email\na@b.test\n', infected), { status: 'failed', reason: 'malware', signature: 'Eicar-Test-Signature' });
-    assert.equal((await run('email,clave\na@b.test,x\n')).reason, 'unknown_columns');
+    assert.equal((await run('email,clave\na@b.test,x\n', clean, ['email', 'clave'])).reason, 'unknown_target');
     assert.equal((await run('PK\u0003\u0004\u0000\u0000binario')).reason, 'not_text');
     assert.equal((await run('')).reason, 'empty_file');
     assert.equal((await run('email\n"sin cerrar\n')).reason, 'invalid_csv');
@@ -95,7 +119,7 @@ describe('almacenamiento privado y procesador de CSV', () => {
   it('si el antivirus no responde, el archivo queda para el reintento', async () => {
     const saved = await upload('email\na@b.test\n');
     const down = { scan: async () => { throw new Error('clamav timeout'); } };
-    await assert.rejects(processContactsCsv({ fileId: saved.id, attributes: [] }, { store, clamav: down }));
+    await assert.rejects(processContactsCsv({ fileId: saved.id, attributes: [], mapping: ['email'] }, { store, clamav: down }));
     assert.ok(await readFile(store.pathOf('incoming', saved.id)));
   });
 });

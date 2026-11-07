@@ -1,12 +1,15 @@
 import { once } from 'node:events';
 import { parse } from 'csv-parse';
-import { detectDelimiter, LIMITS, validateHeader, validateRow } from '../csv-rows.js';
+import { detectDelimiter, LIMITS, previewCells, validateMapping, validateRow } from '../csv-rows.js';
 
 // Inspection of an uploaded contacts CSV inside the file-processor
-// (ADR-004): antivirus first, then streaming parse and per-row validation.
-// Valid rows go to results/<fileId> as JSON lines for the worker; the
-// original upload is deleted once there is an outcome; a thrown error (for
-// example ClamAV unreachable) keeps it for the retry.
+// (ADR-004), in two jobs (ADR-028):
+//   preview  antivirus, then the header and a small sample for the user to
+//            map columns; the upload stays in quarantine for the import
+//   import   streaming parse with the confirmed mapping and per-row
+//            validation; valid rows go to results/<fileId> as JSON lines
+// The original upload is deleted once there is a final outcome; a thrown
+// error (for example ClamAV unreachable) keeps it for the retry.
 
 async function firstLine(store, fileId) {
   const stream = store.read('incoming', fileId);
@@ -19,23 +22,59 @@ async function firstLine(store, fileId) {
   return text.split(/\r?\n/)[0] ?? '';
 }
 
+function records(store, fileId, delimiter) {
+  return store.read('incoming', fileId).pipe(parse({
+    bom: true, delimiter, relax_column_count: true, skip_empty_lines: true, max_record_size: 64 * 1024, relax_quotes: false,
+  }));
+}
+
+export async function processContactsCsvPreview(data, deps) {
+  const outcome = await preview(data, deps);
+  if (outcome.status !== 'ok') await deps.store.remove('incoming', data.fileId);
+  return outcome;
+}
+
+async function preview({ fileId }, { store, clamav }) {
+  const scan = await clamav.scan(store.read('incoming', fileId));
+  if (!scan.clean) return { status: 'failed', reason: 'malware', signature: scan.signature };
+  const line = await firstLine(store, fileId);
+  // A CSV is text: a NUL byte means a binary file with a .csv name.
+  if (line.includes('\u0000')) return { status: 'failed', reason: 'not_text' };
+  const parser = records(store, fileId, detectDelimiter(line));
+  let header = null;
+  const sample = [];
+  try {
+    for await (const record of parser) {
+      if (header === null) {
+        if (record.length > LIMITS.maxColumns) return { status: 'failed', reason: 'too_many_columns' };
+        header = previewCells(record);
+        continue;
+      }
+      sample.push(previewCells(record));
+      if (sample.length === LIMITS.sampleRows) break;
+    }
+  } catch {
+    return { status: 'failed', reason: 'invalid_csv' };
+  } finally {
+    parser.destroy();
+  }
+  if (header === null) return { status: 'failed', reason: 'empty_file' };
+  return { status: 'ok', header, sample };
+}
+
 export async function processContactsCsv(data, deps) {
   const outcome = await inspect(data, deps);
   await deps.store.remove('incoming', data.fileId);
   return outcome;
 }
 
-async function inspect({ fileId, attributes }, { store, clamav }) {
+async function inspect({ fileId, mapping, attributes }, { store, clamav }) {
   const scan = await clamav.scan(store.read('incoming', fileId));
   if (!scan.clean) return { status: 'failed', reason: 'malware', signature: scan.signature };
 
-  const header = await firstLine(store, fileId);
-  // A CSV is text: a NUL byte means a binary file with a .csv name.
-  if (header.includes('\u0000')) return { status: 'failed', reason: 'not_text' };
-  const delimiter = detectDelimiter(header);
-  const parser = store.read('incoming', fileId).pipe(parse({
-    bom: true, delimiter, relax_column_count: true, skip_empty_lines: true, max_record_size: 64 * 1024, relax_quotes: false,
-  }));
+  const line = await firstLine(store, fileId);
+  if (line.includes('\u0000')) return { status: 'failed', reason: 'not_text' };
+  const parser = records(store, fileId, detectDelimiter(line));
   const output = await store.writer('results', fileId);
   const seen = new Set();
   const errors = [];
@@ -52,8 +91,10 @@ async function inspect({ fileId, attributes }, { store, clamav }) {
   try {
     for await (const record of parser) {
       if (columns === null) {
-        const checked = validateHeader(record, attributes);
-        if (checked.error) return { status: 'failed', reason: checked.error, columns: checked.columns ?? [] };
+        // The mapping was checked by the backend; checked again here against
+        // the real header, in case the file and the mapping do not match.
+        const checked = validateMapping(mapping, previewCells(record), attributes);
+        if (checked.error) return { status: 'failed', reason: checked.error };
         columns = checked.columns;
         continue;
       }

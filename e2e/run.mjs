@@ -193,17 +193,25 @@ try {
     await page.waitForSelector('main .details');
   });
 
-  await step('lista de contactos e importación CSV revisada por antivirus', async () => {
+  await step('lista con variables e importación CSV con asociación de columnas (antivirus)', async () => {
     await page.goto(`${BASE_URL}/#/contactos`);
     await ready(page, '#/contactos');
     await page.click('.page-header button.button-primary');
     await page.fill('dialog #field-name', `Clientes ${suffix}`);
-    await page.fill('dialog #field-attributes', 'ciudad, plan');
     await page.click('dialog form button[type="submit"]');
     await ready(page, '#/contactos/');
-    const csv = 'email;first_name;ciudad\nana@e2e.test;Ana;La Paz\nmalo;X;Y\nluis@e2e.test;Luis;Sucre\n';
+    // Variables first (ADR-028): "Ciudad" becomes {{ciudad}}.
+    await page.click('button:text-is("Nueva variable")');
+    await page.fill('dialog #field-label', 'Ciudad');
+    await page.click('dialog form button[type="submit"]');
+    await page.waitForSelector('code:text-is("{{ciudad}}")');
+    // Headers in Spanish: the mapping is suggested and confirmed.
+    const csv = 'Correo;Nombre;Ciudad;Notas\nana@e2e.test;Ana;La Paz;x\nmalo;X;Y;x\nluis@e2e.test;Luis;Sucre;x\n';
     await page.setInputFiles('input[type="file"]', { name: 'clientes.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await page.click('button:text-is("Importar")');
+    await page.waitForSelector('dialog #field-col_0', { timeout: 60000 });
+    if (await page.inputValue('dialog #field-col_2') !== 'ciudad') throw new Error('la columna Ciudad no se sugirió como {{ciudad}}');
+    await page.click('dialog form button[type="submit"]');
     await page.waitForSelector('td:text-is("2 nuevos, 0 actualizados, 1 rechazados")', { timeout: 60000 });
     await page.waitForSelector('td:text-is("ana@e2e.test"), span:text-is("ana@e2e.test")');
   });

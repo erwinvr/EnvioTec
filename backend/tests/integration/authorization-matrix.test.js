@@ -91,6 +91,11 @@ const MATRIX_CASES = {
   'POST /api/v1/lists/:id/imports': { url: (f) => `/api/v1/lists/${f.listId}/imports`, success: 202, multipart: () => multipart('m.csv', 'email\nm@matriz.test\n') },
   'GET /api/v1/lists/:id/imports': { url: (f) => `/api/v1/lists/${f.listId}/imports`, success: 200 },
   'GET /api/v1/imports/:id': { url: (f) => `/api/v1/imports/${f.importId}`, success: 200 },
+  'POST /api/v1/imports/:id/mapping': { url: (f) => `/api/v1/imports/${f.toMapImportId}/mapping`, success: 200, payload: () => ({ mapping: ['email'] }) },
+  'DELETE /api/v1/imports/:id': { url: (f) => `/api/v1/imports/${f.toCancelImportId}`, success: 200 },
+  'POST /api/v1/lists/:id/variables': { url: (f) => `/api/v1/lists/${f.varListId}/variables`, success: 201, payload: () => ({ label: 'Ciudad de matriz' }) },
+  'PATCH /api/v1/lists/:id/variables/:name': { url: (f) => `/api/v1/lists/${f.varListId}/variables/ciudad`, success: 200, payload: () => ({ label: 'Ciudad' }) },
+  'DELETE /api/v1/lists/:id/variables/:name': { url: (f) => `/api/v1/lists/${f.varListId}/variables/borrable`, success: 200 },
   'GET /api/v1/lists/:id/export': { url: (f) => `/api/v1/lists/${f.listId}/export`, success: 200 },
   'GET /api/v1/suppressions': { url: () => '/api/v1/suppressions', success: 200 },
   'POST /api/v1/suppressions': { url: () => '/api/v1/suppressions', success: 201, payload: () => ({ email: `${PREFIX}.alta@matriz.test` }) },
@@ -240,6 +245,19 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       [fixtures.areaId, fixtures.listId, allowed],
     );
     fixtures.importId = imported.rows[0].id;
+    // Imports waiting for their column mapping (ADR-028), and a list with variables.
+    const awaiting = await owner.query(
+      `INSERT INTO contact_imports (area_id, list_id, file_id, original_name, size_bytes, sha256, created_by, status, header, sample)
+       VALUES ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'awaiting_mapping', '["email"]', '[["m@matriz.test"]]'),
+              ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'awaiting_mapping', '["email"]', '[]') RETURNING id`,
+      [fixtures.areaId, fixtures.listId, allowed],
+    );
+    [fixtures.toMapImportId, fixtures.toCancelImportId] = awaiting.rows.map((row) => row.id);
+    const varList = await owner.query(
+      `INSERT INTO contact_lists (area_id, name, attributes, attribute_labels) VALUES ($1, $2, '{ciudad,borrable}', '{"ciudad":"Ciudad","borrable":"Borrable"}') RETURNING id`,
+      [fixtures.areaId, `${PREFIX}-variables`],
+    );
+    fixtures.varListId = varList.rows[0].id;
     const suppression = await owner.query(
       "INSERT INTO suppressions (email_hash, email, reason, source) VALUES (sha256(convert_to($1, 'UTF8')), $1, 'manual', 'manual') RETURNING id",
       [`${PREFIX}.s@matriz.test`],

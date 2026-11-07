@@ -16,7 +16,7 @@ import { createQueue, createWorker, QUEUES } from './core/queue/queues.js';
 import { createRedisClient } from './core/redis/client.js';
 import { createAuthRepository } from './modules/auth/auth.repository.js';
 import { createAttachmentResultsHandler } from './modules/campaigns/jobs/attachment-results.job.js';
-import { createImportResultsHandler } from './modules/contacts/jobs/import-results.job.js';
+import { createImportExpiryJob, createImportPreviewHandler, createImportResultsHandler } from './modules/contacts/jobs/import-results.job.js';
 import { createQuotasRepository } from './modules/quotas/quotas.repository.js';
 import { createQuotasService } from './modules/quotas/quotas.service.js';
 import { createSender } from './modules/sending/sender.service.js';
@@ -54,10 +54,12 @@ await scheduler.every('ad-review', AD_REVIEW_MS, createAdReviewJob({
 // Outcomes of the isolated file inspection (ADR-004), applied with the database.
 const store = createFileStore(config.files.dir);
 const FILE_RESULT_HANDLERS = {
+  contacts_csv_preview: createImportPreviewHandler({ pool, audit }),
   contacts_csv: createImportResultsHandler({ pool, store, audit, logger }),
   template_docx: createTemplateResultsHandler({ pool, store, audit, logger }),
   campaign_pdf: createAttachmentResultsHandler({ pool, store, audit }),
 };
+await scheduler.every('import-expiry', HOUR_MS, createImportExpiryJob({ pool, store, audit, logger }));
 const fileResults = createWorker(QUEUES.fileResults, async (job) => {
   const handler = FILE_RESULT_HANDLERS[job.data.kind];
   if (!handler) throw new Error(`unknown file kind: ${job.data.kind}`);

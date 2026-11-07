@@ -509,3 +509,12 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | Amenaza o requisito | Control | Verificación |
 | --- | --- | --- |
 | T22 / ADR-008 (IDOR entre áreas) | `areas.view_all` amplía solo la lectura. Toda modificación de plantillas, listas, contactos y campañas, y el flujo de aprobación, se limita al área del propio usuario. Un registro visible de otra área responde 403 (auditado como `authorization.area_deny`); pausar y cancelar quedan como excepción para detener envíos (ADR-026, hallazgo H17) | `integration/area-write-scope.test.js`, `unit/authorization.test.js` |
+
+### Variables de lista y asociación de columnas (2026-11-07)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| ADR-004 (archivos no confiables) | La vista previa del CSV se genera en el `file-processor` aislado, después del antivirus; encabezado y muestra limpios de caracteres de control, recortados a 100 caracteres y como máximo 50 columnas | `unit/contacts-files.test.js`, `integration/contacts.test.js` |
+| A8 (mass assignment) | La asociación solo admite campos fijos o variables de la lista; correo obligatorio y sin destinos repetidos; validada en el backend y otra vez en el procesador contra el encabezado real | `contacts.test.js`, `unit/contacts-files.test.js` |
+| Datos personales | La muestra se borra al confirmar o al terminar; las importaciones sin asociar vencen a las 24 horas y su archivo se borra | `contacts.test.js` |
+| Integridad | Una variable con datos no se borra; el nombre técnico no cambia; altas, cambios y bajas de variables auditados | `contacts.test.js`, `authorization-matrix.test.js` |

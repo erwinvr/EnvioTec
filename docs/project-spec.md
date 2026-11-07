@@ -55,8 +55,10 @@ MÓDULOS DE NEGOCIO:
   - Contactos: alta manual, importación CSV (XLSX fuera de la v1), listas o
     segmentos, deduplicación, lista de supresión (bajas, rebotes, quejas),
     anonimización a pedido del contacto. Campos fijos (email, nombre, apellido)
-    más atributos propios por lista, con nombre validado
-    (^[a-z][a-z0-9_]{0,39}$).
+    más variables propias por lista, cada una con nombre técnico validado
+    (^[a-z][a-z0-9_]{0,39}$) y etiqueta; una variable con datos no se borra.
+    La importación CSV asocia cada columna a un campo o variable de la
+    lista antes de importar (ADR-028).
     Permisos: contacts.view, contacts.create, contacts.update, contacts.import,
     contacts.export, contacts.delete, suppressions.view, suppressions.manage
   - Campañas: plantilla + lista + PDF opcional + remitente + programación; flujo

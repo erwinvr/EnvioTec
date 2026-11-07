@@ -1094,13 +1094,115 @@ paths:
         '422': { $ref: '#/components/responses/Error' }
   /api/v1/imports/{id}:
     get:
-      summary: 'Estado y resultado de una importación'
+      summary: 'Estado y resultado de una importación; en awaiting_mapping trae el encabezado y 3 filas de muestra (ADR-028)'
       operationId: getContactImport
       x-enviotec-permission: contacts.view
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: Importación }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Cancelar una importación que espera la asociación de columnas (el archivo se borra)'
+      operationId: cancelContactImport
+      x-enviotec-permission: contacts.import
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Importación cancelada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/imports/{id}/mapping:
+    post:
+      summary: 'Asociar cada columna del CSV a un campo fijo, una variable de la lista o null (no importar)'
+      description: 'El correo es obligatorio y ningún destino se repite. Se audita como contacts.import_mapping.'
+      operationId: mapContactImport
+      x-enviotec-permission: contacts.import
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mapping]
+              properties:
+                mapping: { type: array, minItems: 1, maxItems: 50, items: { type: [string, 'null'] } }
+      responses:
+        '200': { description: Importación en curso }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}/variables:
+    post:
+      summary: 'Crear una variable de la lista: etiqueta y nombre técnico opcional (ADR-028)'
+      operationId: addListVariable
+      x-enviotec-permission: contacts.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [label]
+              properties:
+                label: { type: string, minLength: 1, maxLength: 60 }
+                name: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$' }
+      responses:
+        '201': { description: Lista con la variable nueva }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /api/v1/lists/{id}/variables/{name}:
+    patch:
+      summary: 'Cambiar la etiqueta de una variable (el nombre técnico no cambia)'
+      operationId: relabelListVariable
+      x-enviotec-permission: contacts.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [label]
+              properties:
+                label: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        '200': { description: Lista actualizada }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Borrar una variable sin datos en ningún contacto (409 variable_in_use si los tiene)'
+      operationId: removeListVariable
+      x-enviotec-permission: contacts.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: name, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$' } }
+      responses:
+        '200': { description: Lista actualizada }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
