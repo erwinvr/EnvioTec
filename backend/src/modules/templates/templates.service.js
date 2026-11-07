@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { FileTooLargeError } from '../../core/files/storage.js';
@@ -31,6 +31,11 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
     return row;
   }
 
+  // Changes only in the user's own area (ADR-026).
+  const forWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
+    resourceType: 'template', id, find: (scope, { lock = true } = {}) => repository.find(client, scope, id, { forUpdate: forUpdate && lock }),
+  });
+
   return {
     inScope,
 
@@ -44,11 +49,11 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
     },
 
     async create(auth, input, context) {
-      const scope = areaScopeFor(auth);
-      const areaId = input.areaId ?? auth.user.areaId;
+      // Always the user's own area: areas.view_all does not allow creating elsewhere (ADR-026).
+      const areaId = auth.user.areaId;
       return withTransaction(db, async (client) => {
         const area = areaId ? await repository.findArea(client, areaId) : null;
-        if (!area || !area.is_active || (!scope?.all && scope?.areaId !== areaId)) {
+        if (!area || !area.is_active || (input.areaId !== undefined && input.areaId !== areaId)) {
           throw new ValidationError([{ field: 'areaId', code: 'invalid_area' }]);
         }
         const id = await repository.create(client, { ...input, areaId, actorId: auth.user.id });
@@ -59,10 +64,10 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
 
     async update(auth, id, changes, context) {
       return withTransaction(db, async (client) => {
-        const before = await inScope(client, auth, id, { forUpdate: true });
+        const before = await forWrite(client, auth, id, { forUpdate: true });
         await repository.update(client, id, changes, auth.user.id);
         const after = await repository.find(client, { all: true }, id);
-        await record(client, auth, context, changes.isArchived === true ? 'template.archive' : 'template.update', id, {
+        await record(client, auth, context, { true: 'template.archive', false: 'template.unarchive' }[changes.isArchived] ?? 'template.update', id, {
           before: { name: before.name, description: before.description, isArchived: before.is_archived },
           after: { name: after.name, description: after.description, isArchived: after.is_archived },
         });
@@ -71,7 +76,7 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
     },
 
     async uploadVersion(auth, id, file, context) {
-      const template = await inScope(db, auth, id);
+      const template = await forWrite(db, auth, id);
       if (template.is_archived) throw new AppError('La plantilla está archivada', { statusCode: 409, code: 'CONFLICT' });
       if (!file) throw new ValidationError([{ field: 'file', code: 'required' }]);
       const originalName = safeFileName(file.filename);
@@ -88,7 +93,7 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
         throw error;
       }
       const version = await withTransaction(db, async (client) => {
-        await inScope(client, auth, id, { forUpdate: true });
+        await forWrite(client, auth, id, { forUpdate: true });
         const created = await repository.createVersion(client, { templateId: id, file: saved, originalName, actorId: auth.user.id });
         await record(client, auth, context, 'template.version_upload', id, {
           version: created.version, originalName, sizeBytes: saved.size, sha256: saved.sha256,

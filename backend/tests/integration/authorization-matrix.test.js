@@ -121,6 +121,7 @@ const MATRIX_CASES = {
   'POST /api/v1/campaigns/:id/attachment': {
     url: (f) => `/api/v1/campaigns/${f.campaigns.draft}/attachment`, success: 202, multipart: () => multipart('m.pdf', pdf(), 'application/pdf'),
   },
+  'DELETE /api/v1/campaigns/:id/attachment': { url: (f) => `/api/v1/campaigns/${f.campaigns.withAttachment}/attachment`, success: 200 },
   'POST /api/v1/campaigns/:id/submit': { url: (f) => `/api/v1/campaigns/${f.campaigns.toSubmit}/submit`, success: 200 },
   'POST /api/v1/campaigns/:id/approve': { url: (f) => `/api/v1/campaigns/${f.campaigns.toApprove}/approve`, success: 200 },
   'POST /api/v1/campaigns/:id/reject': { url: (f) => `/api/v1/campaigns/${f.campaigns.toReject}/reject`, success: 200, payload: () => ({ reason: 'Revisar asunto' }) },
@@ -282,6 +283,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       toPause: await campaign('approved', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId, approvedBy: allowed }),
       toResume: await campaign('paused', { createdBy: fixtures.targetId, submittedBy: fixtures.targetId, approvedBy: allowed }),
       toDelete: await campaign('draft'),
+      withAttachment: await campaign('draft'),
     };
     await createSession('allowed', allowed);
     await createSession('withoutPermission', await createUser('noperm'));

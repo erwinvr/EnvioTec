@@ -81,9 +81,11 @@ export function createForm({ fields, submitLabel, onSubmit, secondary }) {
         row.querySelector('.field-error').textContent = text;
         row.classList.toggle('has-error', text !== '');
       }
-      const generic = Object.keys(fieldErrors).some((name) => !fields.some((field) => field.name === name));
-      errorBox.textContent = message ?? '';
-      errorBox.hidden = !message && !generic;
+      // Errors about something outside this form (for example a test send
+      // rejected because the campaign has no PDF) are listed in the box.
+      const others = Object.entries(fieldErrors).filter(([name]) => !fields.some((field) => field.name === name)).map(([, text]) => text);
+      errorBox.textContent = [message, ...others].filter(Boolean).join(' ');
+      errorBox.hidden = !message && others.length === 0;
     },
     values() {
       return Object.fromEntries(fields.map((field) => [field.name, readValue(form, field)]));

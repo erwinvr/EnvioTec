@@ -34,13 +34,14 @@ export function createSender({ pool, repository, quotas, mandrill, store, audit,
 
   async function contentOf(client, campaign) {
     const row = await repository.content(client, campaign);
-    if (!row || row.attachment_status !== 'ready' || !row.sender_active) return null;
+    // The PDF is optional (ADR-027); if the campaign has one, it must be the inspected one.
+    if (!row || !row.sender_active || (campaign.attachment_id && row.attachment_status !== 'ready')) return null;
     const images = [];
     for (const image of row.images) images.push({ cid: image.cid, contentType: image.contentType, base64: await readBase64(image.fileId) });
     return {
       content: { html: row.html, text: row.text_body, variables: row.variables, images },
       sender: { email: row.sender_email, display_name: row.display_name, reply_to: row.reply_to },
-      attachment: { name: row.attachment_name, base64: await readBase64(row.attachment_file) },
+      attachment: row.attachment_file ? { name: row.attachment_name, base64: await readBase64(row.attachment_file) } : null,
     };
   }
 

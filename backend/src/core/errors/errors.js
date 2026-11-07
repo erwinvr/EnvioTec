@@ -29,6 +29,16 @@ export class AuthorizationError extends AppError {
   }
 }
 
+// A change outside the user's own area to a record the user can read
+// (areas.view_all only widens reading, ADR-026). Audited as denied.
+export class AreaWriteDeniedError extends AuthorizationError {
+  constructor(resourceType, resourceId) {
+    super('Solo puede modificar datos de su área', { code: 'AREA_WRITE_DENIED' });
+    this.resourceType = resourceType;
+    this.resourceId = resourceId;
+  }
+}
+
 // Login failure. One message for every cause (wrong password, unknown user,
 // locked, disabled or expired account) to prevent user enumeration (A5).
 export class InvalidCredentialsError extends AppError {

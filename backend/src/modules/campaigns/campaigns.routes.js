@@ -68,6 +68,7 @@ export async function campaignsRoutes(app, { db, audit, store, fileQueue, sendQu
     reply.code(202);
     return ok(await campaigns.uploadAttachment(r.auth, r.params.id, file, ctx(r)));
   }, { bodyLimit: MAX_BYTES + 64 * 1024 });
+  route('DELETE', '/api/v1/campaigns/:id/attachment', 'campaigns.update', { params: idParams, response: { 200: one } }, action(campaigns.removeAttachment));
   route('GET', '/api/v1/campaigns/:id/recipients', 'campaigns.view', {
     params: idParams, querystring: object(paging),
     response: {

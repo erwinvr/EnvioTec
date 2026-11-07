@@ -32,6 +32,9 @@ cleanup() {
   rm -rf "$SECRETS_DIR"
 }
 trap cleanup EXIT
+# A run that was killed (no EXIT trap) leaves its stack and volumes behind,
+# with passwords that no longer match the new ephemeral secrets.
+cleanup
 
 step() { printf '\n==> %s\n' "$1"; }
 

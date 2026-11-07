@@ -95,5 +95,11 @@ describe('plantillas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/
     assert.equal((await call('DELETE', `/api/v1/templates/${template.id}`)).json().data.isArchived, true);
     assert.ok(!(await call('GET', '/api/v1/templates')).json().data.some((t) => t.id === template.id));
     assert.equal((await upload(template.id, 'x.docx', docx())).statusCode, 409);
+    // Archived templates are listed on request and can be restored (audited).
+    assert.ok((await call('GET', '/api/v1/templates?includeArchived=true')).json().data.some((t) => t.id === template.id));
+    const restored = await call('PATCH', `/api/v1/templates/${template.id}`, { isArchived: false });
+    assert.equal(restored.json().data.isArchived, false);
+    assert.ok((await call('GET', '/api/v1/templates')).json().data.some((t) => t.id === template.id));
+    assert.equal((await h.audits('template.unarchive', template.id)).length, 1);
   });
 });

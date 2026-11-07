@@ -8,7 +8,6 @@ import { createForm } from '../../components/form.js';
 import { openModal } from '../../components/modal.js';
 import { dataTable } from '../../components/data-table.js';
 import { button, pageHeader } from '../../components/page.js';
-import { areas, optionsOf } from '../admin/lookups.js';
 
 const ATTRIBUTE = /^[a-z][a-z0-9_]{0,39}$/;
 const RESERVED = ['email', 'first_name', 'last_name'];
@@ -27,14 +26,11 @@ export function render(container) {
   });
 
   async function create() {
-    const viewAll = auth.hasPermission('areas.view_all');
-    const areaList = viewAll ? ((await run(areas)) ?? []).filter((a) => a.isActive) : [];
     const form = createForm({
       fields: [
         { name: 'name', label: t('lists.name'), required: true, minLength: 2, maxLength: 100 },
         { name: 'description', label: t('roles.description'), type: 'textarea', maxLength: 500 },
         { name: 'attributes', label: t('lists.attributes'), hint: t('lists.attributesHint') },
-        ...(viewAll ? [{ name: 'areaId', label: t('users.area'), type: 'select', required: true, options: [{ value: '', label: '—' }, ...optionsOf(areaList)] }] : []),
       ],
       submitLabel: t('lists.create'),
       onSubmit: async (values) => {
@@ -45,7 +41,6 @@ export function render(container) {
           return;
         }
         const body = { name: values.name, description: values.description, attributes };
-        if (viewAll) body.areaId = values.areaId;
         const result = await run(() => api.post('/api/v1/lists', body), { form });
         if (result) {
           modal.close();

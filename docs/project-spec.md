@@ -12,7 +12,7 @@ Esta es la Parte B del prompt base (`docs/baseline.md`). Define el dominio de En
 | Perfiles | Operador y aprobador separados; nadie aprueba su propia campaña | Evita que un solo usuario envíe a toda la base (maker-checker) |
 | MFA | Administradores y quien envía o aprueba campañas | Una cuenta tomada permite phishing con el dominio de la empresa; AD on-premise no aporta MFA |
 | Volumen | Saldo de envíos por usuario y tope global mensual de 100.000 envíos | Control de abuso y de costo; el plan contratado es de 100.000 envíos al mes |
-| Adjuntos | Un PDF por campaña, el mismo para todos, máximo 5 MB | Simplifica el envío y permite inspeccionar el archivo una sola vez |
+| Adjuntos | PDF opcional: como máximo uno por campaña, el mismo para todos, máximo 5 MB (ADR-027) | Simplifica el envío y permite inspeccionar el archivo una sola vez |
 | Alcance de datos | Por área | Cada área ve sus datos; vista global solo para administración, auditoría y reportes |
 | Autenticación | Usuarios locales y de AD on-premise (LDAPS), un único origen por cuenta; administradores solo locales | Flexibilidad sin permitir caminos alternativos de acceso ni roles administrativos otorgados desde AD |
 | Procesos en segundo plano | Worker con cola (BullMQ/Redis) | Envíos programados, sincronización de eventos, reintentos e idempotencia |
@@ -59,7 +59,7 @@ MÓDULOS DE NEGOCIO:
     (^[a-z][a-z0-9_]{0,39}$).
     Permisos: contacts.view, contacts.create, contacts.update, contacts.import,
     contacts.export, contacts.delete, suppressions.view, suppressions.manage
-  - Campañas: plantilla + lista + PDF + remitente + programación; flujo
+  - Campañas: plantilla + lista + PDF opcional + remitente + programación; flujo
     borrador → enviada a aprobación → aprobada → programada → enviando →
     finalizada / cancelada; envío de prueba; pausa y cancelación.
     - Una sola aprobación; nadie aprueba una campaña que envió a aprobación.
@@ -97,7 +97,8 @@ MÓDULOS DE NEGOCIO:
     (users.create del baseline no se usa: las cuentas locales usan
     users.create_local y las de AD se crean en el primer login)
 
-ADJUNTOS:             Un único PDF por campaña, el mismo para todos los destinatarios.
+ADJUNTOS:             PDF opcional (2026-11-07, ADR-027): como máximo uno por campaña,
+                      el mismo para todos los destinatarios.
                       Validación por firma de archivo (no por extensión), tamaño
                       máximo 5 MB, rechazo de PDFs cifrados o con JavaScript,
                       acciones automáticas o archivos embebidos, escaneo antivirus

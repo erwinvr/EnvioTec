@@ -29,6 +29,10 @@ export async function run(action, { form } = {}) {
       form.showErrors(outcome.fields, outcome.message);
       return undefined;
     }
+    if (outcome.kind === 'fields' && outcome.problems.length > 0) {
+      toast(`${outcome.message}: ${outcome.problems.join('; ')}`, 'error');
+      return undefined;
+    }
     toast(outcome.message, 'error');
     return undefined;
   }

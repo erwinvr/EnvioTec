@@ -41,15 +41,20 @@ export function missingVariables(templateVariables, listAttributes) {
 export function assertReadyToSubmit({ campaign, version, list, sender, attachment, recipientsInList }) {
   const problems = [];
   if (!version || version.status !== 'ready') problems.push({ field: 'templateVersionId', code: 'template_not_ready' });
+  // An archived template is out of use, also for drafts that already referenced it.
+  if (version?.is_archived) problems.push({ field: 'templateId', code: 'template_archived' });
   if (!sender || !sender.is_active) problems.push({ field: 'senderId', code: 'sender_inactive' });
-  if (!attachment || attachment.status !== 'ready') problems.push({ field: 'attachment', code: 'attachment_missing' });
+  // The PDF is optional (ADR-027); one that was uploaded must have passed the inspection.
+  if (attachment && attachment.status !== 'ready') problems.push({ field: 'attachment', code: 'attachment_not_ready' });
   if (!campaign.subject) problems.push({ field: 'subject', code: 'required' });
   if (campaign.scheduled_at && new Date(campaign.scheduled_at) <= new Date()) problems.push({ field: 'scheduledAt', code: 'in_the_past' });
   if (recipientsInList === 0) problems.push({ field: 'listId', code: 'empty_list' });
   if (version && list) {
     for (const name of missingVariables(version.variables, list.attributes)) problems.push({ field: 'templateVersionId', code: 'missing_variable', variable: name });
   }
-  if (problems.length > 0) throw new ValidationError(problems.map(({ field, code }) => ({ field, code })), 'La campaña no está lista para aprobación');
+  // Also checked before a test send: the message fits both. The missing
+  // variable is named so the user knows what to fix.
+  if (problems.length > 0) throw new ValidationError(problems, 'La campaña todavía no está lista para enviarse');
 }
 
 // Test sends (Parte B): to the user's own email or to an allowed internal

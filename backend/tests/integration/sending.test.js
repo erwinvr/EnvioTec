@@ -56,12 +56,12 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
 
   // An approved campaign as approval leaves it (8.4): recipients snapshot
   // and the quota reserved.
-  async function approvedCampaign(people) {
+  async function approvedCampaign(people, { withPdf = true } = {}) {
     const { rows } = await h.owner.query(
       `INSERT INTO campaigns (area_id, name, status, subject, template_version_id, list_id, sender_id, attachment_id, created_by,
                               submitted_by, submitted_at, approved_by, approved_at, recipient_count, reserved)
        VALUES ($1, 'Campaña', 'approved', 'Novedades', $2, $3, $4, $5, $6, $6, now(), $7, now(), $8, $8) RETURNING id`,
-      [h.areaId, refs.versionId, refs.listId, refs.senderId, refs.attachmentId, operator.id, approver.id, people.length],
+      [h.areaId, refs.versionId, refs.listId, refs.senderId, withPdf ? refs.attachmentId : null, operator.id, approver.id, people.length],
     );
     for (const [name, firstName] of people) {
       await h.owner.query('INSERT INTO campaign_recipients (campaign_id, email, first_name) VALUES ($1, $2, $3)', [rows[0].id, email(name), firstName]);
@@ -206,6 +206,16 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
     assert.equal((await batches(id))[0].status, 'pending');
     assert.equal((await h.audits('campaign.pause', id))[0].metadata.reason, 'global_cap');
     assert.deepEqual(mails.map((m) => [m.to, m.tag]), [['admin@empresa.test', 'global-cap']]);
+  });
+
+  it('sin PDF (opcional, ADR-027): el lote sale sin adjunto', async () => {
+    mock.state.mode = 'ok';
+    const id = await approvedCampaign([['nora', 'Nora']], { withPdf: false });
+    const sender = senderWith();
+    const [batchId] = await started(sender, id);
+    assert.deepEqual(await sender.sendBatch(batchId), { accepted: 1, rejected: 0 });
+    const message = mock.state.sent.find((m) => m.metadata.batch_id === batchId);
+    assert.deepEqual(message.attachments, []);
   });
 
   it('campaña cancelada: sus lotes pendientes no se envían', async () => {

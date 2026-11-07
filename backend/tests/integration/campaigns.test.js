@@ -110,7 +110,16 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
       await sleep(500);
     }
     assert.deepEqual([attachment.status, attachment.failureReason], ['failed', 'active_content']);
-    assert.equal((await op('POST', `/api/v1/campaigns/${id}/submit`)).json().error.details[0].code, 'attachment_missing');
+    assert.equal((await op('POST', `/api/v1/campaigns/${id}/submit`)).json().error.details[0].code, 'attachment_not_ready');
+    // The PDF is optional (ADR-027): once the rejected one is removed, the campaign goes without it.
+    const removed = await op('DELETE', `/api/v1/campaigns/${id}/attachment`);
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(removed.json().data.attachment, null);
+    assert.equal((await h.audits('campaign.attachment_remove', id)).length, 1);
+    assert.equal((await op('DELETE', `/api/v1/campaigns/${id}/attachment`)).json().error.details[0].code, 'no_attachment');
+    const submitted = await op('POST', `/api/v1/campaigns/${id}/submit`);
+    assert.equal(submitted.statusCode, 200, submitted.body);
+    assert.equal((await op('DELETE', `/api/v1/campaigns/${id}/attachment`)).statusCode, 409, 'solo en borrador');
   });
 
   it('flujo completo: enviar a aprobación, maker-checker, foto sin suprimidos y reserva de cuota', async () => {
@@ -132,6 +141,33 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
     assert.equal(edited.json().data.status, 'draft');
     assert.deepEqual(await quota(operator.id), { assigned: 100, reserved: 0, consumed: 0 });
     assert.equal((await op('GET', `/api/v1/campaigns/${id}/recipients`)).json().meta.total, 0);
+  });
+
+  it('un borrador toma la última versión lista de su plantilla al enviarse a aprobación', async () => {
+    const own = await fixtures(h.areaId);
+    const id = await readyCampaign(own);
+    assert.equal((await op('GET', `/api/v1/campaigns/${id}`)).json().data.template.version, 1);
+    await h.owner.query(
+      `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
+       VALUES ($1, 2, 'ready', gen_random_uuid(), 'p2.docx', 10, repeat('b', 64), '<p>Hola v2 {{first_name}}</p>', 'Hola v2', '{first_name}', $2)`,
+      [own.templateId, operator.id],
+    );
+    const submitted = await op('POST', `/api/v1/campaigns/${id}/submit`);
+    assert.equal(submitted.statusCode, 200, submitted.body);
+    assert.equal(submitted.json().data.template.version, 2);
+    assert.equal((await h.audits('campaign.submit', id))[0].metadata.versionUpdated, true);
+  });
+
+  it('una plantilla archivada impide enviar a aprobación el borrador que ya la usaba', async () => {
+    const id = await readyCampaign();
+    await h.owner.query('UPDATE templates SET is_archived = true WHERE id = $1', [refs.templateId]);
+    try {
+      const res = await op('POST', `/api/v1/campaigns/${id}/submit`);
+      assert.equal(res.statusCode, 422, res.body);
+      assert.ok(res.json().error.details.some((d) => d.code === 'template_archived'));
+    } finally {
+      await h.owner.query('UPDATE templates SET is_archived = false WHERE id = $1', [refs.templateId]);
+    }
   });
 
   it('la base de datos también impide que la misma persona envíe y apruebe', async () => {

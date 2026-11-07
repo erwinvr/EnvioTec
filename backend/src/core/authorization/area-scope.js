@@ -1,4 +1,4 @@
-import { AuthorizationError } from '../errors/errors.js';
+import { AreaWriteDeniedError, AuthorizationError, NotFoundError } from '../errors/errors.js';
 
 // Data scope by area (ADR-008). Every repository query on business data must
 // receive a scope and add areaCondition() to its WHERE clause.
@@ -17,6 +17,14 @@ function isSafeColumn(column) {
 
 export function areaScopeFor(auth) {
   if (auth?.permissions?.has('areas.view_all')) return Object.freeze({ all: true });
+  return writeScopeFor(auth);
+}
+
+// Scope for changing business data (templates, contacts, campaigns and
+// their workflow): always the user's own area. areas.view_all only widens
+// what a user can read (Parte B), so an operator or approver who also holds
+// a reporting role still writes and approves only in their area (ADR-026).
+export function writeScopeFor(auth) {
   if (auth?.user?.areaId) return Object.freeze({ all: false, areaId: auth.user.areaId });
   return null;
 }
@@ -31,4 +39,16 @@ export function areaCondition(scope, column, params) {
   if (typeof scope.areaId !== 'string' || scope.areaId === '') throw new AuthorizationError();
   params.push(scope.areaId);
   return `${column} = $${params.length}`;
+}
+
+// Finds a record to change it. `find(scope)` runs the repository lookup.
+// In the user's own area: the row. Readable only through areas.view_all:
+// 403, audited. Otherwise: 404, so other areas' records are not revealed.
+export async function findForWrite(auth, { resourceType, id, find }) {
+  const row = await find(writeScopeFor(auth));
+  if (row) return row;
+  if (auth?.permissions?.has('areas.view_all') && await find(areaScopeFor(auth), { lock: false })) {
+    throw new AreaWriteDeniedError(resourceType, id);
+  }
+  throw new NotFoundError();
 }

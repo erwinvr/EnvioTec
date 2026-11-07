@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { FileTooLargeError } from '../../core/files/storage.js';
@@ -69,6 +69,14 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
     return row;
   }
 
+  // Changes only in the user's own area (ADR-026).
+  const listForWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
+    resourceType: 'contact_list', id, find: (scope, { lock = true } = {}) => repository.list(client, scope, id, { forUpdate: forUpdate && lock }),
+  });
+  const contactForWrite = (client, auth, id) => findForWrite(auth, {
+    resourceType: 'contact', id, find: (scope, { lock = true } = {}) => repository.contactInScope(client, scope, id, { forUpdate: lock }),
+  });
+
   return {
     listInScope,
 
@@ -78,11 +86,11 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
 
     async createList(auth, input, context) {
       assertAttributes(input.attributes);
-      const scope = areaScopeFor(auth);
-      const areaId = input.areaId ?? auth.user.areaId;
+      // Always the user's own area: areas.view_all does not allow creating elsewhere (ADR-026).
+      const areaId = auth.user.areaId;
       return withTransaction(db, async (client) => {
         const area = areaId ? await repository.findArea(client, areaId) : null;
-        if (!area || !area.is_active || (!scope?.all && scope?.areaId !== areaId)) {
+        if (!area || !area.is_active || (input.areaId !== undefined && input.areaId !== areaId)) {
           throw new ValidationError([{ field: 'areaId', code: 'invalid_area' }]);
         }
         const id = await repository.createList(client, { ...input, areaId, actorId: auth.user.id });
@@ -94,7 +102,7 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
     async updateList(auth, id, changes, context) {
       assertAttributes(changes.attributes);
       return withTransaction(db, async (client) => {
-        const before = await listInScope(client, auth, id, { forUpdate: true });
+        const before = await listForWrite(client, auth, id, { forUpdate: true });
         await repository.updateList(client, id, changes, auth.user.id);
         const after = await repository.list(client, { all: true }, id);
         await record(client, auth, context, 'list.update', 'contact_list', id, {
@@ -113,7 +121,7 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
 
     async createContact(auth, listId, input, context) {
       return withTransaction(db, async (client) => {
-        const list = await listInScope(client, auth, listId);
+        const list = await listForWrite(client, auth, listId);
         const contact = normalizeContact(input, list.attributes);
         const id = await repository.createContact(client, { areaId: list.area_id, listId, contact, actorId: auth.user.id });
         await record(client, auth, context, 'contact.create', 'contact', id, { listId });
@@ -123,8 +131,7 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
 
     async updateContact(auth, id, input, context) {
       return withTransaction(db, async (client) => {
-        const before = await repository.contactInScope(client, areaScopeFor(auth), id, { forUpdate: true });
-        if (!before) throw new NotFoundError();
+        const before = await contactForWrite(client, auth, id);
         if (before.anonymized_at) throw new AppError('El contacto fue anonimizado', { statusCode: 409, code: 'CONFLICT' });
         const contact = normalizeContact({
           email: input.email ?? before.email, firstName: 'firstName' in input ? input.firstName : before.first_name,
@@ -139,8 +146,7 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
 
     async deleteContact(auth, id, context) {
       await withTransaction(db, async (client) => {
-        const contact = await repository.contactInScope(client, areaScopeFor(auth), id, { forUpdate: true });
-        if (!contact) throw new NotFoundError();
+        const contact = await contactForWrite(client, auth, id);
         await repository.deleteContact(client, id);
         await record(client, auth, context, 'contact.delete', 'contact', id, { listId: contact.list_id });
       });
@@ -148,7 +154,7 @@ export function createContactsService({ db, repository, audit, store, fileQueue 
 
     // Stores the upload in quarantine and queues it for inspection.
     async startImport(auth, listId, file, context) {
-      const list = await listInScope(db, auth, listId);
+      const list = await listForWrite(db, auth, listId);
       if (!file) throw new ValidationError([{ field: 'file', code: 'required' }]);
       const originalName = safeFileName(file.filename);
       if (!originalName.toLowerCase().endsWith('.csv')) {

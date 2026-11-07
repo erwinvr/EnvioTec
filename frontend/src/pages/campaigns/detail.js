@@ -23,9 +23,10 @@ export async function render(container, { params }) {
   const reload = () => render(container, { params });
   const draft = c.status === 'draft';
 
-  async function act(path, { confirm, body, success }) {
+  async function act(path, { confirm, body, success, method = 'post' }) {
     if (confirm && !await confirmDialog({ title: confirm.title, message: confirm.message, danger: confirm.danger })) return;
-    if (await run(() => api.post(`/api/v1/campaigns/${c.id}/${path}`, body))) {
+    const call = method === 'delete' ? () => api.delete(`/api/v1/campaigns/${c.id}/${path}`) : () => api.post(`/api/v1/campaigns/${c.id}/${path}`, body);
+    if (await run(call)) {
       toast(success, 'success');
       reload();
     }
@@ -132,7 +133,12 @@ export async function render(container, { params }) {
     ])),
     can('campaigns.update') && draft ? section(t('campaigns.attachment'), [
       el('p', { className: 'hint', text: t('campaigns.attachmentHelp') }),
-      el('div', { className: 'actions' }, [fileInput, button(t('campaigns.uploadPdf'), upload, { kind: 'primary' })]),
+      el('div', { className: 'actions' }, [
+        fileInput, button(t('campaigns.uploadPdf'), upload, { kind: 'primary' }),
+        c.attachment ? button(t('campaigns.removePdf'), () => act('attachment', {
+          method: 'delete', confirm: { title: t('campaigns.removePdf'), message: t('campaigns.removePdfConfirm') }, success: t('campaigns.pdfRemoved'),
+        })) : null,
+      ]),
     ]) : null,
     recipients ? section(t('campaigns.recipients'), recipients.element) : null,
   ]);

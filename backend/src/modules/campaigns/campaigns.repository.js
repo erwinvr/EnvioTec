@@ -169,6 +169,10 @@ export function createCampaignsRepository() {
       return rows[0].id;
     },
 
+    async setTemplateVersion(db, campaignId, templateVersionId) {
+      await db.query("UPDATE campaigns SET template_version_id = $2 WHERE id = $1 AND status = 'draft'", [campaignId, templateVersionId]);
+    },
+
     async setAttachment(db, campaignId, attachmentId) {
       await db.query('UPDATE campaigns SET attachment_id = $2 WHERE id = $1', [campaignId, attachmentId]);
     },

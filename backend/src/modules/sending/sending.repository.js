@@ -144,8 +144,10 @@ export function createSendingRepository() {
         `SELECT tv.html, tv.text_body, tv.variables, tv.images,
                 s.email AS sender_email, s.display_name, s.reply_to, s.is_active AS sender_active,
                 a.file_id AS attachment_file, a.original_name AS attachment_name, a.status AS attachment_status
-           FROM template_versions tv, sender_identities s, campaign_attachments a
-          WHERE tv.id = $1 AND s.id = $2 AND a.id = $3`,
+           FROM template_versions tv
+           JOIN sender_identities s ON s.id = $2
+           LEFT JOIN campaign_attachments a ON a.id = $3
+          WHERE tv.id = $1`,
         [campaign.template_version_id, campaign.sender_id, campaign.attachment_id],
       );
       return rows[0] ?? null;

@@ -10,12 +10,26 @@ import { toCampaign } from './campaigns.service.js';
 // Campaign workflow (Parte B, ADR-011): submit, approve (snapshot +
 // quota reservation in one transaction), reject, cancel, pause, resume and
 // test sends. Every step is audited; approval needs a reauthentication.
+// Only in the user's own area (ADR-026), except pause and cancel: they only
+// stop sending, so whoever reads every area can use them against abuse.
 
 export function createCampaignWorkflow({ db, repository, campaigns, audit, quotas, sendQueue }) {
   const record = (client, auth, context, action, id, metadata, result = 'success') => audit.record(client, {
     actor: actorFrom(auth), action, resourceType: 'campaign', resourceId: id, result, context, metadata,
   });
   const reload = async (client, id) => toCampaign(await repository.find(client, { all: true }, id));
+
+  // A draft follows its template: before a test send or the submission it
+  // moves to the latest ready version. From approval on, the version is
+  // frozen (T12): what was approved is what is sent.
+  async function followLatestVersion(client, campaign) {
+    if (campaign.status !== 'draft') return;
+    const latest = await repository.latestReadyVersion(client, campaign.template_id, campaign.area_id);
+    if (!latest || latest === campaign.template_version_id) return;
+    await repository.setTemplateVersion(client, campaign.id, latest);
+    campaign.template_version_id = latest;
+    campaign.versionUpdated = true;
+  }
 
   async function readiness(client, campaign) {
     const refs = await repository.references(client, campaign.area_id, {
@@ -28,11 +42,12 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
   return {
     async submit(auth, id, context) {
       return withTransaction(db, async (client) => {
-        const campaign = await campaigns.inScope(client, auth, id, { forUpdate: true });
+        const campaign = await campaigns.forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['draft']);
+        await followLatestVersion(client, campaign);
         await readiness(client, campaign);
         await repository.setStatus(client, id, 'submitted', { submitted_by: auth.user.id, submitted_at: new Date() });
-        await record(client, auth, context, 'campaign.submit', id, {});
+        await record(client, auth, context, 'campaign.submit', id, { templateVersionId: campaign.template_version_id, versionUpdated: campaign.versionUpdated === true });
         return reload(client, id);
       });
     },
@@ -43,7 +58,7 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
     async approve(auth, id, context) {
       assertRecentReauth(auth);
       return withTransaction(db, async (client) => {
-        const campaign = await campaigns.inScope(client, auth, id, { forUpdate: true });
+        const campaign = await campaigns.forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['submitted']);
         assertApprover(campaign, auth.user.id);
         await readiness(client, campaign);
@@ -63,7 +78,7 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
 
     async reject(auth, id, { reason }, context) {
       return withTransaction(db, async (client) => {
-        const campaign = await campaigns.inScope(client, auth, id, { forUpdate: true });
+        const campaign = await campaigns.forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['submitted']);
         assertApprover(campaign, auth.user.id);
         await repository.resetToDraft(client, id);
@@ -100,7 +115,7 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
 
     async resume(auth, id, context) {
       return withTransaction(db, async (client) => {
-        const campaign = await campaigns.inScope(client, auth, id, { forUpdate: true });
+        const campaign = await campaigns.forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['paused']);
         await repository.setStatus(client, id, campaign.started_at ? 'sending' : 'approved');
         await record(client, auth, context, 'campaign.resume', id, {});
@@ -114,14 +129,15 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
       const settings = await repository.settings(db, ['test_send.daily_max_per_user', 'test_send.allowed_domains']);
       assertTestRecipient(email, { userEmail: auth.user.email, allowedDomains: settings['test_send.allowed_domains'] ?? [] });
       const created = await withTransaction(db, async (client) => {
-        const campaign = await campaigns.inScope(client, auth, id, { forUpdate: true });
+        const campaign = await campaigns.forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['draft', 'submitted', 'approved', 'scheduled', 'paused']);
+        await followLatestVersion(client, campaign);
         await readiness(client, campaign);
         await repository.lockTestSends(client, auth.user.id);
         assertTestSendsLeft(await repository.testSendsToday(client, auth.user.id), settings['test_send.daily_max_per_user']);
         await quotas.consume(client, { userId: auth.user.id, amount: 1, campaignId: id, fromReserve: false, actor: actorFrom(auth), context });
         const test = await repository.createTestSend(client, { campaignId: id, userId: auth.user.id, email: email.toLowerCase() });
-        await record(client, auth, context, 'campaign.test_send', id, { testSendId: test.id });
+        await record(client, auth, context, 'campaign.test_send', id, { testSendId: test.id, templateVersionId: campaign.template_version_id, versionUpdated: campaign.versionUpdated === true });
         return test;
       });
       try {

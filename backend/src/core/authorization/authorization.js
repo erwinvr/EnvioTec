@@ -1,7 +1,7 @@
 import { actorFrom, auditContext } from '../audit/audit.service.js';
 import { computeStage } from '../auth/stage.js';
 import { readCookie, hashToken, isWellFormedToken, SESSION_COOKIE } from '../auth/session-token.js';
-import { AuthenticationError, AuthorizationError } from '../errors/errors.js';
+import { AreaWriteDeniedError, AuthenticationError, AuthorizationError } from '../errors/errors.js';
 import { CSRF_HEADER, CsrfError, isSafeMethod, isValidCsrfToken } from '../security/csrf.js';
 
 // Reauthentication is valid for 5 minutes (A5).
@@ -18,6 +18,16 @@ const REAUTH_WINDOW_MS = 5 * 60 * 1000;
 // are loaded on every request, so role changes apply immediately.
 export function registerAuthorization(app, { sessionRepository, idleTimeoutMinutes, csrfSecret, mfaPolicy, audit, db }) {
   app.decorateRequest('auth', null);
+
+  // Every 403 is audited (A7): a change attempted outside the user's area is
+  // detected in the services, after the route permission check.
+  app.addHook('onError', async (request, reply, error) => {
+    if (!(error instanceof AreaWriteDeniedError)) return;
+    await audit.record(db, {
+      actor: actorFrom(request.auth), action: 'authorization.area_deny', resourceType: error.resourceType, resourceId: error.resourceId,
+      result: 'denied', context: auditContext(request), metadata: { route: `${request.method} ${request.routeOptions.url}` },
+    });
+  });
 
   app.addHook('onRequest', async (request) => {
     if (request.is404 || request.routeOptions.config?.public === true) return;

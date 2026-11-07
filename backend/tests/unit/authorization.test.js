@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { generateSessionToken, hashToken, isWellFormedToken, readCookie } from '../../src/core/auth/session-token.js';
-import { areaCondition, areaScopeFor } from '../../src/core/authorization/area-scope.js';
-import { AuthorizationError } from '../../src/core/errors/errors.js';
+import { areaCondition, areaScopeFor, findForWrite, writeScopeFor } from '../../src/core/authorization/area-scope.js';
+import { AreaWriteDeniedError, AuthorizationError, NotFoundError } from '../../src/core/errors/errors.js';
 import { PERMISSION_CATALOG, PERMISSION_CODES } from '../../src/modules/permission-catalog.js';
 
 describe('tokens de sesión', () => {
@@ -37,6 +37,18 @@ describe('alcance por área (ADR-008)', () => {
     assert.deepEqual(areaScopeFor(auth('a1')), { all: false, areaId: 'a1' });
     assert.equal(areaScopeFor(auth(null)), null);
     assert.equal(areaScopeFor(null), null);
+  });
+
+  it('areas.view_all amplía la lectura, nunca la escritura (ADR-026)', async () => {
+    assert.deepEqual(writeScopeFor(auth('a1', ['areas.view_all'])), { all: false, areaId: 'a1' });
+    assert.equal(writeScopeFor(auth(null, ['areas.view_all'])), null);
+    const rows = { a1: { id: 'r1', area_id: 'a1' }, a2: { id: 'r2', area_id: 'a2' } };
+    // A fake repository lookup: the row of `area` if the scope covers it.
+    const finder = (area) => async (scope) => (scope.all || scope.areaId === area ? rows[area] : null);
+    assert.equal(await findForWrite(auth('a1'), { resourceType: 'template', id: 'r1', find: finder('a1') }), rows.a1);
+    await assert.rejects(findForWrite(auth('a1', ['areas.view_all']), { resourceType: 'template', id: 'r2', find: finder('a2') }),
+      (error) => error instanceof AreaWriteDeniedError && error.statusCode === 403 && error.resourceId === 'r2');
+    await assert.rejects(findForWrite(auth('a1'), { resourceType: 'template', id: 'r2', find: finder('a2') }), NotFoundError);
   });
 
   it('genera una condición parametrizada', () => {

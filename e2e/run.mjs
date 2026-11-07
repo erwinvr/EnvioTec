@@ -11,6 +11,8 @@ import { docx, PNG } from '../backend/tests/helpers/docx.js';
 import { pdf } from '../backend/tests/helpers/pdf.js';
 
 const BASE_URL = process.env.BASE_URL;
+// Area of the bootstrap superadmin (scripts/check.sh, BOOTSTRAP_AREA).
+const OWN_AREA = 'Administración E2E';
 const USERNAME = process.env.E2E_USERNAME;
 const PASSWORD = readFileSync(process.env.E2E_PASSWORD_FILE, 'utf8').trim();
 const problems = [];
@@ -61,6 +63,7 @@ async function step(name, fn) {
       dialog: document.querySelector('dialog')?.innerText.slice(0, 400) ?? null,
     })).catch(() => null);
     console.log(JSON.stringify(seen));
+    console.log(JSON.stringify({ pendingRequests: [...pending.values()], lastApiResponses: apiLog.slice(-8) }));
     throw error;
   }
 }
@@ -68,6 +71,16 @@ async function step(name, fn) {
 const browser = await chromium.launch({ chromiumSandbox: false });
 const context = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'es-BO' });
 const page = await context.newPage();
+// Network trace for failure diagnostics: requests still open and the last API answers.
+const pending = new Map();
+const apiLog = [];
+page.on('request', (request) => pending.set(request, `${request.method()} ${new URL(request.url()).pathname}`));
+page.on('requestfailed', (request) => pending.delete(request));
+page.on('requestfinished', async (request) => {
+  const label = pending.get(request);
+  pending.delete(request);
+  if (label?.includes(' /api/')) apiLog.push(`${label} -> ${(await request.response())?.status()}`);
+});
 await page.exposeFunction('reportViolation', (text) => problems.push(`CSP: ${text}`));
 await page.addInitScript(() => {
   document.addEventListener('securitypolicyviolation', (event) => {
@@ -157,7 +170,8 @@ try {
     await page.goto(`${BASE_URL}/#/remitentes`);
     await ready(page, '#/remitentes');
     await page.click('.page-header button.button-primary');
-    await page.selectOption('dialog #field-areaId', { label: areaName });
+    // The superadmin's own area: business data is created only there (ADR-026).
+    await page.selectOption('dialog #field-areaId', { label: OWN_AREA });
     await page.fill('dialog #field-email', `ventas.${suffix}@envios.e2e.test`);
     await page.fill('dialog #field-displayName', 'Ventas E2E');
     await page.click('dialog form button[type="submit"]');
@@ -185,7 +199,6 @@ try {
     await page.click('.page-header button.button-primary');
     await page.fill('dialog #field-name', `Clientes ${suffix}`);
     await page.fill('dialog #field-attributes', 'ciudad, plan');
-    await page.selectOption('dialog #field-areaId', { label: areaName });
     await page.click('dialog form button[type="submit"]');
     await ready(page, '#/contactos/');
     const csv = 'email;first_name;ciudad\nana@e2e.test;Ana;La Paz\nmalo;X;Y\nluis@e2e.test;Luis;Sucre\n';
@@ -200,7 +213,6 @@ try {
     await ready(page, '#/plantillas');
     await page.click('.page-header button.button-primary');
     await page.fill('dialog #field-name', `Bienvenida ${suffix}`);
-    await page.selectOption('dialog #field-areaId', { label: areaName });
     await page.click('dialog form button[type="submit"]');
     await ready(page, '#/plantillas/');
     const file = docx({ paragraphs: ['Hola {{first_name}}', 'Su ciudad: {{ciudad}}'], png: PNG });

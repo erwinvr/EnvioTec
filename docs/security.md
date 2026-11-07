@@ -503,3 +503,9 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | V16 / DoS | Rotación de logs de todos los contenedores | `docker compose config` |
 
 **Resultado:** sin hallazgos altos ni críticos abiertos. Quedan abiertos, de severidad media o baja, H11 a H16, que dependen del AD de la organización, la API key de Mandrill y el DNS.
+
+### Corrección posterior — alcance de escritura por área (2026-11-03)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| T22 / ADR-008 (IDOR entre áreas) | `areas.view_all` amplía solo la lectura. Toda modificación de plantillas, listas, contactos y campañas, y el flujo de aprobación, se limita al área del propio usuario. Un registro visible de otra área responde 403 (auditado como `authorization.area_deny`); pausar y cancelar quedan como excepción para detener envíos (ADR-026, hallazgo H17) | `integration/area-write-scope.test.js`, `unit/authorization.test.js` |

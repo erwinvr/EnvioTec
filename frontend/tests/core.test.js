@@ -77,6 +77,11 @@ describe('manejo de errores centralizado (A9)', () => {
     assert.equal(fields.kind, 'fields');
     assert.match(fields.fields.newPassword, /común/);
     assert.equal(fields.fields.x, 'Valor inválido');
+    const notReady = describeError({ status: 422, code: 'VALIDATION_ERROR', details: [
+      { field: 'attachment', code: 'attachment_missing' }, { field: 'templateVersionId', code: 'missing_variable', variable: 'nombre1' },
+    ] });
+    assert.deepEqual(notReady.problems, ['Falta un PDF aprobado', 'La plantilla usa variables que la lista no tiene: nombre1']);
+    assert.equal(describeError({ status: 403, code: 'AREA_WRITE_DENIED' }).message, 'Solo puede modificar datos de su área.');
     assert.match(describeError({ status: 429, retryAfter: 30 }).message, /30/);
     const server = describeError({ status: 500, code: 'INTERNAL_ERROR', requestId: 'abc-123', message: 'SELECT * FROM' });
     assert.match(server.message, /abc-123/);

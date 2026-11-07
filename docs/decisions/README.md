@@ -29,3 +29,5 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [023](023-campanias-decisiones-de-implementacion.md) | Campañas: decisiones de implementación | Propuesto |
 | [024](024-envio-y-sincronizacion.md) | Envío y sincronización con Mandrill | Propuesto |
 | [025](025-reportes.md) | Reportes: definiciones, alcance y datos personales | Propuesto |
+| [026](026-areas-view-all-solo-lectura.md) | `areas.view_all` amplía la lectura, no la escritura | Aceptado |
+| [027](027-pdf-opcional.md) | El PDF de la campaña es opcional | Aceptado |

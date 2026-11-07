@@ -24,6 +24,10 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+      # Real campaign sending through Mandrill (ADR-024): only the worker
+      # holds the campaign key. Without this file, nothing is sent.
+      MANDRILL_CAMPAIGNS_API_KEY_FILE: /run/secrets/mandrill_campaigns_api_key
+    secrets: [database_url, redis_url_worker, mandrill_campaigns_api_key]
     volumes:
       - ./backend/src:/app/src:ro
 
@@ -52,3 +56,6 @@ services:
   redis:
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     networks: [data, files, public]
+
+secrets:
+  mandrill_campaigns_api_key: { file: "${SECRETS_DIR:-./secrets}/mandrill_campaigns_api_key" }

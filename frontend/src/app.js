@@ -43,8 +43,15 @@ async function render() {
     try {
       const module = await outcome.route.load();
       if (id !== renderId) return;
-      await module.render(main, { params: outcome.params, query });
+      // Each page draws into its own container, shown only if it is still
+      // the current navigation: a slower previous page that finishes later
+      // never overwrites the new one.
+      const view = el('div', { className: 'view' });
+      await module.render(view, { params: outcome.params, query });
+      if (id !== renderId) return;
+      replace(main, view);
     } catch {
+      if (id !== renderId) return;
       replace(main, message(t('errors.genericTitle'), t('errors.unexpected')));
     }
   }

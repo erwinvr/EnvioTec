@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor, } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, findForWrite, writeScopeFor } from '../../core/authorization/area-scope.js';
 import { hasPermission } from '../../core/authorization/authorization.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
@@ -41,6 +41,11 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
     return row;
   }
 
+  // Changes only in the user's own area (ADR-026).
+  const forWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
+    resourceType: 'campaign', id, find: (scope, { lock = true } = {}) => repository.find(client, scope, id, { forUpdate: forUpdate && lock }),
+  });
+
   // Every referenced object must exist in the campaign's area.
   async function resolveReferences(client, areaId, input) {
     const templateVersionId = input.templateVersionId ?? await repository.latestReadyVersion(client, input.templateId, areaId);
@@ -61,6 +66,7 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
 
   return {
     inScope,
+    forWrite,
 
     async list(auth, { status, page, pageSize }) {
       const { rows, total } = await repository.list(db, areaScopeFor(auth), { status, limit: pageSize, offset: (page - 1) * pageSize });
@@ -71,10 +77,10 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
       return toCampaign(await inScope(db, auth, id));
     },
 
-    // The campaign belongs to the area of its list, which must be within the
-    // creator's scope; template and sender must be of that same area.
+    // The campaign belongs to the area of its list, which must be the
+    // creator's own area (ADR-026); template and sender of that same area.
     async create(auth, input, context) {
-      const areaId = await repository.listArea(db, areaScopeFor(auth), input.listId);
+      const areaId = await repository.listArea(db, writeScopeFor(auth), input.listId);
       if (!areaId) throw new ValidationError([{ field: 'listId', code: 'invalid_list' }]);
       return withTransaction(db, async (client) => {
         const templateVersionId = await resolveReferences(client, areaId, input);
@@ -88,7 +94,7 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
 
     async update(auth, id, changes, context) {
       return withTransaction(db, async (client) => {
-        const before = await inScope(client, auth, id, { forUpdate: true });
+        const before = await forWrite(client, auth, id, { forUpdate: true });
         const outcome = editOutcome(before);
         const merged = {
           name: changes.name ?? before.name,
@@ -114,17 +120,17 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
 
     async remove(auth, id, context) {
       await withTransaction(db, async (client) => {
-        const campaign = await inScope(client, auth, id, { forUpdate: true });
+        const campaign = await forWrite(client, auth, id, { forUpdate: true });
         assertStatus(campaign, ['draft'], 'Solo se borran borradores');
         await repository.delete(client, id);
         await record(client, auth, context, 'campaign.delete', id, { name: campaign.name });
       });
     },
 
-    // The single PDF of the campaign (Parte B): inspected in the
+    // The single PDF of the campaign, optional (ADR-027): inspected in the
     // file-processor; only while the campaign is a draft.
     async uploadAttachment(auth, id, file, context) {
-      const campaign = await inScope(db, auth, id);
+      const campaign = await forWrite(db, auth, id);
       assertStatus(campaign, ['draft'], 'El PDF solo se cambia en borrador');
       if (!file) throw new ValidationError([{ field: 'file', code: 'required' }]);
       const originalName = safeFileName(file.filename);
@@ -140,7 +146,7 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
         throw error;
       }
       const attachmentId = await withTransaction(db, async (client) => {
-        const locked = await inScope(client, auth, id, { forUpdate: true });
+        const locked = await forWrite(client, auth, id, { forUpdate: true });
         assertStatus(locked, ['draft'], 'El PDF solo se cambia en borrador');
         const created = await repository.createAttachment(client, { areaId: locked.area_id, file: saved, originalName, actorId: auth.user.id });
         await repository.setAttachment(client, id, created);
@@ -155,6 +161,19 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
         throw error;
       }
       return toCampaign(await repository.find(db, { all: true }, id));
+    },
+
+    // Takes the PDF out of a draft (ADR-027). The attachment record and its
+    // file stay, as every uploaded file does (perpetual retention, Parte B).
+    async removeAttachment(auth, id, context) {
+      return withTransaction(db, async (client) => {
+        const campaign = await forWrite(client, auth, id, { forUpdate: true });
+        assertStatus(campaign, ['draft'], 'El PDF solo se cambia en borrador');
+        if (!campaign.attachment_id) throw new ValidationError([{ field: 'attachment', code: 'no_attachment' }], 'La campaña no tiene PDF');
+        await repository.setAttachment(client, id, null);
+        await record(client, auth, context, 'campaign.attachment_remove', id, { attachmentId: campaign.attachment_id });
+        return toCampaign(await repository.find(client, { all: true }, id));
+      });
     },
 
     // Snapshot of recipients; emails masked without contacts.view (Parte B).

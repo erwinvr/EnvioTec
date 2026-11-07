@@ -96,6 +96,13 @@ export async function render(container, { params }) {
         if (!await confirmDialog({ title: t('templates.archive'), message: t('templates.archiveConfirm'), danger: true })) return;
         if (await run(() => api.delete(`/api/v1/templates/${template.id}`))) navigate('/plantillas');
       }, { kind: 'danger' }) : null,
+      auth.hasPermission('templates.update') && template.isArchived ? button(t('templates.unarchive'), async () => {
+        if (!await confirmDialog({ title: t('templates.unarchive'), message: t('templates.unarchiveConfirm') })) return;
+        if (await run(() => api.patch(`/api/v1/templates/${template.id}`, { isArchived: false }))) {
+          toast(t('templates.unarchived'), 'success');
+          render(container, { params });
+        }
+      }) : null,
     ]),
     template.description ? el('p', { text: template.description }) : null,
     canUpdate ? section(t('templates.upload'), [

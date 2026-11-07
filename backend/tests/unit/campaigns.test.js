@@ -37,8 +37,12 @@ describe('reglas de campañas', () => {
     const ready = { campaign: { subject: 'Hola' }, version: { status: 'ready', variables: ['plan'] }, list: { attributes: [] },
       sender: { is_active: true }, attachment: { status: 'ready' }, recipientsInList: 3 };
     assert.throws(() => assertReadyToSubmit(ready), code('missing_variable'));
-    assert.throws(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [] }, attachment: null }), code('attachment_missing'));
+    assert.throws(() => assertReadyToSubmit(ready), (error) => error.details.some((d) => d.code === 'missing_variable' && typeof d.variable === 'string'));
+    // The PDF is optional (ADR-027); one that was uploaded must be ready.
+    assert.doesNotThrow(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [] }, attachment: null }));
+    assert.throws(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [] }, attachment: { status: 'failed' } }), code('attachment_not_ready'));
     assert.throws(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [] }, recipientsInList: 0 }), code('empty_list'));
+    assert.throws(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [], is_archived: true } }), code('template_archived'));
     assert.doesNotThrow(() => assertReadyToSubmit({ ...ready, version: { status: 'ready', variables: [] } }));
   });
 

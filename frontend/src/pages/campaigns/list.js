@@ -19,7 +19,11 @@ export async function campaignForm({ campaign, onSaved }) {
   const [templates, lists, senders] = await Promise.all([
     run(() => api.get('/api/v1/templates')), run(() => api.get('/api/v1/lists')), run(() => api.get('/api/v1/senders')),
   ]);
-  const options = (items, label) => [{ value: '', label: '—' }, ...(items?.data ?? []).map((item) => ({ value: item.id, label: label(item) }))];
+  // Only the user's own area: a campaign is created and changed there even
+  // when the user can read every area (ADR-026).
+  const ownArea = auth.currentUser()?.areaId;
+  const options = (items, label) => [{ value: '', label: '—' }, ...(items?.data ?? [])
+    .filter((item) => item.areaId === ownArea).map((item) => ({ value: item.id, label: label(item) }))];
   const form = createForm({
     fields: [
       { name: 'name', label: t('campaigns.name'), required: true, minLength: 2, maxLength: 150, value: campaign?.name },

@@ -1499,7 +1499,7 @@ paths:
         '422': { $ref: '#/components/responses/Error' }
   /api/v1/campaigns/{id}/attachment:
     post:
-      summary: 'Subir el PDF (inspección aislada con ClamAV y qpdf)'
+      summary: 'Subir el PDF opcional (inspección aislada con ClamAV y qpdf)'
       operationId: uploadCampaignAttachment
       x-enviotec-permission: campaigns.update
       parameters:
@@ -1515,6 +1515,19 @@ paths:
                 file: { type: string, format: binary }
       responses:
         '202': { description: PDF en revisión }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: 'Quitar el PDF de un borrador (ADR-027; el archivo se conserva)'
+      operationId: removeCampaignAttachment
+      x-enviotec-permission: campaigns.update
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Campaña sin PDF }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
