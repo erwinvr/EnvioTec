@@ -1,14 +1,21 @@
 import { createHash } from 'node:crypto';
 import { withTransaction } from '../../core/db/transaction.js';
+import { describeAgent } from './user-agent.js';
 
 // Event synchronization by polling (ADR-005, Parte B: no webhooks). Mandrill
 // keeps events for 30 days, so they are copied locally, idempotently (a key
-// derived from message, type, time and URL). Hard bounces, complaints and
-// unsubscribes join the global suppression list, as does Mandrill's own
-// rejection list.
+// derived from message, type, time and URL), with the details of each open
+// and click (ADR-029). Hard bounces, complaints and unsubscribes join the
+// global suppression list, as does Mandrill's own rejection list.
+//
+// Messages are found by searching the indexed metadata (campaign_id); when
+// that finds fewer messages than were accepted (metadata not indexed yet, or
+// messages sent before the index existed), the missing ones are read one by
+// one by their id, a bounded number per run.
 
 const MAX_AGE_MS = 40 * 24 * 60 * 60 * 1000;
 const SEARCH_LIMIT = 1000;
+const INFO_PER_RUN = 100;
 const STATE_EVENTS = {
   sent: 'sent', bounced: 'hard_bounce', 'soft-bounced': 'soft_bounce', rejected: 'reject', spam: 'spam', unsub: 'unsubscribe', deferred: 'deferral',
 };
@@ -17,22 +24,24 @@ const REJECT_REASONS = { 'hard-bounce': 'hard_bounce', spam: 'complaint', unsub:
 
 export const eventKey = (messageId, type, ts, url = '') => createHash('sha256').update(`${messageId}|${type}|${ts}|${url}`).digest();
 
-// Events of one message from Mandrill's search result.
+const detailOf = (item) => ({ ip: item.ip ?? null, location: item.location ?? null, userAgent: item.ua ?? null, ...describeAgent(item) });
+
+// Events of one message from Mandrill's search or info result.
 export function eventsOf(message) {
   const events = [];
   const type = STATE_EVENTS[message.state];
   if (type) events.push({ type, ts: message.ts });
-  for (const open of message.opens_detail ?? []) events.push({ type: 'open', ts: open.ts });
-  for (const click of message.clicks_detail ?? []) events.push({ type: 'click', ts: click.ts, url: click.url });
+  for (const open of message.opens_detail ?? []) events.push({ type: 'open', ts: open.ts, ...detailOf(open) });
+  for (const click of message.clicks_detail ?? []) events.push({ type: 'click', ts: click.ts, url: click.url, ...detailOf(click) });
   return events;
 }
 
 const day = (date) => date.toISOString().slice(0, 10);
 
-export function createSync({ pool, repository, mandrill, audit, logger, searchLimit = SEARCH_LIMIT }) {
+export function createSync({ pool, repository, mandrill, audit, logger, searchLimit = SEARCH_LIMIT, infoPerRun = INFO_PER_RUN }) {
   // messages/search answers at most `searchLimit` results: a larger
   // campaign is searched batch by batch (each batch is far below it).
-  async function messagesOf(campaign) {
+  async function searched(campaign) {
     const range = { dateFrom: day(campaign.started_at), dateTo: day(new Date()), limit: searchLimit };
     const all = await mandrill.search({ query: `u_campaign_id:"${campaign.id}"`, ...range });
     if (all.length < searchLimit) return all;
@@ -43,13 +52,34 @@ export function createSync({ pool, repository, mandrill, audit, logger, searchLi
     return messages;
   }
 
+  // Accepted messages the search did not return, read by id (bounded).
+  async function missing(campaign, found, budget) {
+    const seen = new Set(found.map((message) => message._id));
+    const messages = [];
+    for (const messageId of await repository.sentMessageIds(pool, campaign.id)) {
+      if (budget.left <= 0) break;
+      if (seen.has(messageId)) continue;
+      budget.left -= 1;
+      try {
+        messages.push(await mandrill.info(messageId));
+      } catch (error) {
+        logger.warn({ campaignId: campaign.id, errorMessage: error.message }, 'message info postponed');
+      }
+    }
+    return messages;
+  }
+
   return {
     async run() {
-      const summary = { campaigns: 0, events: 0, suppressed: 0 };
+      const summary = { campaigns: 0, events: 0, suppressed: 0, byId: 0 };
+      const budget = { left: infoPerRun };
       for (const campaign of await repository.campaignsToSync(pool)) {
         let messages;
         try {
-          messages = await messagesOf(campaign);
+          messages = await searched(campaign);
+          const extra = await missing(campaign, messages, budget);
+          summary.byId += extra.length;
+          messages = [...messages, ...extra];
         } catch (error) {
           logger.warn({ campaignId: campaign.id, errorMessage: error.message }, 'event sync postponed');
           continue;
@@ -63,8 +93,8 @@ export function createSync({ pool, repository, mandrill, audit, logger, searchLi
               const occurredAt = new Date(item.ts * 1000);
               if (Date.now() - occurredAt.getTime() > MAX_AGE_MS) continue;
               const inserted = await repository.insertEvent(client, {
-                campaignId: campaign.id, recipientId: recipient.id, messageId: message._id, type: item.type, occurredAt,
-                url: item.url, key: eventKey(message._id, item.type, item.ts, item.url),
+                ...item, campaignId: campaign.id, recipientId: recipient.id, messageId: message._id, occurredAt,
+                key: eventKey(message._id, item.type, item.ts, item.url),
               });
               if (inserted) summary.events += 1;
               if (inserted && SUPPRESSING[item.type] && await repository.suppress(client, recipient.email, SUPPRESSING[item.type])) summary.suppressed += 1;

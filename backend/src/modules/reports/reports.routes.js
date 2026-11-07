@@ -21,6 +21,9 @@ const recipientProps = {
 };
 const recipient = object(recipientProps, ['id', 'email', 'status', 'delivered', 'opens', 'clicks']);
 const contactRow = object({ ...recipientProps, campaignId: str, campaignName: str, areaName: str, startedAt: nullable }, ['id', 'email', 'status', 'campaignId', 'campaignName']);
+const event = object({
+  type: str, occurredAt: nullable, url: nullable, device: nullable, os: nullable, client: nullable, ip: nullable, location: nullable, userAgent: nullable,
+}, ['type', 'occurredAt']);
 const pageMeta = object({ total: int, page: int, pageSize: int }, ['total', 'page', 'pageSize']);
 const paging = { page: { type: 'integer', minimum: 1, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 } };
 const idParams = object({ id: { type: 'string', format: 'uuid' } }, ['id']);
@@ -44,6 +47,11 @@ export async function reportsRoutes(app, { db, audit }) {
     querystring: object({ ...paging, status: { type: 'string', enum: Object.keys(STATUS_FILTERS) }, event: { type: 'string', enum: Object.keys(EVENT_FILTERS) } }),
     response: { 200: successSchema({ type: 'array', items: recipient }, pageMeta) },
   }, async (r) => paged(await service.recipients(r.auth, r.params.id, r.query), r.query));
+
+  route('GET', '/api/v1/reports/campaigns/:id/recipients/:recipientId/events', 'reports.view', {
+    params: object({ id: { type: 'string', format: 'uuid' }, recipientId: { type: 'string', format: 'uuid' } }, ['id', 'recipientId']),
+    response: { 200: successSchema({ type: 'array', items: event }) },
+  }, async (r) => ok(await service.recipientEvents(r.auth, r.params.id, r.params.recipientId)));
 
   // POST so the address travels in the body, never in the URL (access
   // logs, proxy logs, browser history).

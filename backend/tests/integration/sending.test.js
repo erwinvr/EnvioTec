@@ -17,7 +17,7 @@ import { GlobalCapReachedError } from '../../src/modules/quotas/quotas.rules.js'
 import { createQuotasService } from '../../src/modules/quotas/quotas.service.js';
 import { createSender } from '../../src/modules/sending/sender.service.js';
 import { createSendingRepository } from '../../src/modules/sending/sending.repository.js';
-import { createSync } from '../../src/modules/sending/sync.service.js';
+import { createSync, eventKey } from '../../src/modules/sending/sync.service.js';
 import { createSuppressionsRepository } from '../../src/modules/suppressions/suppressions.repository.js';
 import { createHarness } from '../helpers/auth-fixtures.js';
 import { startMandrillMock } from '../helpers/mandrill-mock.js';
@@ -179,10 +179,16 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
     // Old enough to reconcile (the trigger would refresh updated_at).
     await h.owner.query('BEGIN');
     await h.owner.query('ALTER TABLE send_batches DISABLE TRIGGER send_batches_updated_at');
-    await h.owner.query("UPDATE send_batches SET updated_at = now() - interval '5 minutes' WHERE id = $1", [batchId]);
+    await h.owner.query("UPDATE send_batches SET updated_at = now() - interval '61 minutes' WHERE id = $1", [batchId]);
     await h.owner.query('ALTER TABLE send_batches ENABLE TRIGGER send_batches_updated_at');
     await h.owner.query('COMMIT');
-    await sender.reconcile();
+    // By email and batch_id, without the metadata index (ADR-029).
+    mock.state.indexed = false;
+    try {
+      await sender.reconcile();
+    } finally {
+      mock.state.indexed = true;
+    }
     assert.equal(mock.state.sent.length, calls, 'la conciliación no envía');
     assert.equal((await batches(id))[0].status, 'accepted');
     const r = await recipients(id);
@@ -291,5 +297,40 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
       [[email('luis'), email('queja')]],
     );
     assert.deepEqual(suppressed, [{ email: email('queja'), reason: 'complaint' }, { email: email('luis'), reason: 'hard_bounce' }]);
+  });
+
+  it('sin metadata indexada: la sincronización lee por id y guarda el detalle de cada apertura (ADR-029)', async () => {
+    const id = await approvedCampaign([['mara', 'Mara']]);
+    const sender = senderWith();
+    for (const batchId of await started(sender, id)) await sender.sendBatch(batchId);
+    const now = Math.floor(Date.now() / 1000);
+    const message = mock.state.messages.find((m) => m.metadata.campaign_id === id);
+    message.opens_detail = [
+      { ts: now, ip: '74.125.10.1', location: 'California, US', ua: null },
+      { ts: now + 60, ip: '200.87.1.2', location: 'La Paz, BO', ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15' },
+    ];
+    // An event stored before ADR-029, without details, is completed.
+    const recipient = (await h.owner.query('SELECT id FROM campaign_recipients WHERE campaign_id = $1', [id])).rows[0].id;
+    await h.owner.query(
+      `INSERT INTO message_events (campaign_id, recipient_id, message_id, event_type, occurred_at, idempotency_key)
+       VALUES ($1, $2, $3, 'open', to_timestamp($4), $5)`,
+      [id, recipient, message._id, now, eventKey(message._id, 'open', now)],
+    );
+    mock.state.indexed = false;
+    try {
+      const summary = await createSync({ pool: h.pool, repository, mandrill: createMandrill(mock.config), audit, logger: silent, infoPerRun: 1000 }).run();
+      assert.ok(summary.byId >= 1, JSON.stringify(summary));
+    } finally {
+      mock.state.indexed = true;
+    }
+    const { rows } = await h.owner.query(
+      `SELECT event_type, host(ip) AS ip, location, device, os, client FROM message_events
+        WHERE campaign_id = $1 AND event_type = 'open' ORDER BY occurred_at`, [id],
+    );
+    assert.deepEqual(rows, [
+      { event_type: 'open', ip: '74.125.10.1', location: 'California, US', device: 'proxy', os: null, client: 'Gmail (proxy de imágenes)' },
+      { event_type: 'open', ip: '200.87.1.2', location: 'La Paz, BO', device: 'mobile', os: 'iOS', client: 'Apple Mail / Safari' },
+    ]);
+    assert.equal((await h.owner.query("SELECT count(*)::int AS n FROM message_events WHERE campaign_id = $1 AND event_type = 'sent'", [id])).rows[0].n, 1);
   });
 });

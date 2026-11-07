@@ -112,6 +112,19 @@ export function createReportsRepository() {
       return { rows, total: count[0].total };
     },
 
+    // Events of one recipient of a campaign already checked to be in scope,
+    // with the details of opens and clicks (ADR-029).
+    async recipientEvents(db, campaignId, recipientId) {
+      const { rows } = await db.query(
+        `SELECT e.event_type, e.occurred_at, e.url, host(e.ip) AS ip, e.location, e.user_agent, e.device, e.os, e.client
+           FROM message_events e
+          WHERE e.campaign_id = $1 AND e.recipient_id = $2
+          ORDER BY e.occurred_at, e.event_type LIMIT 500`,
+        [campaignId, recipientId],
+      );
+      return rows;
+    },
+
     // Everything sent to one address, in the campaigns within scope.
     async contact(db, scope, email, { limit, offset }) {
       const params = [email];

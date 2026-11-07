@@ -34,22 +34,28 @@ const sendResult = ajv.compile({
   },
 });
 
-const searchResult = ajv.compile({
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['_id', 'email', 'state', 'ts'],
-    properties: {
-      _id: { type: 'string', maxLength: 100 },
-      email: { type: 'string', maxLength: 254 },
-      state: { type: 'string', maxLength: 30 },
-      ts: { type: 'integer' },
-      metadata: { type: 'object' },
-      opens_detail: { type: 'array', items: { type: 'object', required: ['ts'], properties: { ts: { type: 'integer' } } } },
-      clicks_detail: { type: 'array', items: { type: 'object', required: ['ts'], properties: { ts: { type: 'integer' }, url: { type: 'string', maxLength: 2000 } } } },
-    },
+// Where and with what an open or click happened (ADR-029).
+const trackingDetail = {
+  ts: { type: 'integer' },
+  ip: { type: ['string', 'null'], maxLength: 45 },
+  location: { type: ['string', 'null'], maxLength: 200 },
+  ua: { type: ['string', 'null'], maxLength: 1000 },
+};
+const message = {
+  type: 'object',
+  required: ['_id', 'email', 'state', 'ts'],
+  properties: {
+    _id: { type: 'string', maxLength: 100 },
+    email: { type: 'string', maxLength: 254 },
+    state: { type: 'string', maxLength: 30 },
+    ts: { type: 'integer' },
+    metadata: { type: 'object' },
+    opens_detail: { type: 'array', items: { type: 'object', required: ['ts'], properties: trackingDetail } },
+    clicks_detail: { type: 'array', items: { type: 'object', required: ['ts'], properties: { ...trackingDetail, url: { type: 'string', maxLength: 2000 } } } },
   },
-});
+};
+const searchResult = ajv.compile({ type: 'array', items: message });
+const infoResult = ajv.compile(message);
 
 const rejectsResult = ajv.compile({
   type: 'array',
@@ -89,6 +95,8 @@ export function createMandrill({ apiUrl, apiKey }, { fetchImpl = fetch, timeoutM
   return {
     send: (message) => call('/messages/send', { message, async: false }, sendResult),
     search: ({ query, dateFrom, dateTo, limit = 1000 }) => call('/messages/search', { query, date_from: dateFrom, date_to: dateTo, limit }, searchResult),
+    // One message by id: works without indexed metadata (ADR-029).
+    info: (id) => call('/messages/info', { id }, infoResult),
     rejects: () => call('/rejects/list', { include_expired: false }, rejectsResult),
   };
 }

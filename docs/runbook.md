@@ -226,7 +226,10 @@ Ningún correo real sale de EnvioTec hasta completar estos pasos:
    - R4: los encabezados `List-Unsubscribe` y `List-Unsubscribe-Post` (baja con un clic) y el enlace de baja de Mandrill;
    - aperturas y clics se sincronizan; un rebote o una queja de prueba llega a supresión.
 4. Registrar los resultados en `docs/spikes/` y actualizar ADR-005, ADR-013 y ADR-024.
-5. Solo entonces, crear la primera campaña real con una lista interna pequeña.
+5. **Indexar la metadata en Mailchimp:** en *Settings → Custom Metadata*, agregar los campos `campaign_id` y `batch_id` (el campo *Value* va vacío). Sin el índice, la sincronización usa consultas por mensaje, más lentas para campañas grandes (ADR-029).
+6. Solo entonces, crear la primera campaña real con una lista interna pequeña.
+
+**Si cambia el DNS del servidor:** recrear el proxy de egreso (`docker compose up -d --force-recreate egress-proxy`). Docker no actualiza el DNS de un contenedor ya creado, y el worker deja de llegar a Mailchimp (*mandrill unreachable*).
 
 ## 11. Respuesta ante abuso de envío
 

@@ -113,6 +113,21 @@ describe('reportes', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/ch
     assert.ok(!JSON.stringify(audits).includes(email('ana')));
   });
 
+  it('detalle de eventos del destinatario: IP y ubicación solo con contacts.view (ADR-029)', async () => {
+    const { rows } = await h.owner.query('SELECT id FROM campaign_recipients WHERE campaign_id = $1 AND email = $2', [campaignId, email('ana')]);
+    const recipientId = rows[0].id;
+    await h.owner.query(
+      `UPDATE message_events SET ip = '200.87.1.2', location = 'La Paz, BO', user_agent = 'Mozilla/5.0 (iPhone)', device = 'mobile', os = 'iOS'
+        WHERE recipient_id = $1 AND event_type = 'open'`, [recipientId],
+    );
+    const url = `/api/v1/reports/campaigns/${campaignId}/recipients/${recipientId}/events`;
+    const full = (await get(viewer, url)).json().data.filter((e) => e.type === 'open');
+    assert.deepEqual([full.length, full[0].ip, full[0].location, full[0].device, full[0].os], [2, '200.87.1.2', 'La Paz, BO', 'mobile', 'iOS']);
+    const masked = (await get(reporter, url)).json().data.find((e) => e.type === 'open');
+    assert.deepEqual([masked.ip, masked.location, masked.userAgent, masked.device], [null, null, null, 'mobile']);
+    assert.equal((await get(foreign, url)).statusCode, 404);
+  });
+
   it('exportación: CSV con fórmulas neutralizadas, enmascarado según permiso y auditado', async () => {
     const clear = await get(viewer, `/api/v1/reports/campaigns/${campaignId}/export`);
     assert.equal(clear.statusCode, 200);

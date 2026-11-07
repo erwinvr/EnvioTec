@@ -20,6 +20,8 @@ import { buildMessage } from './message.js';
 const MAX_ATTEMPTS = 5;
 const ACCEPTED = new Set(['sent', 'queued', 'scheduled']);
 const SYSTEM = { type: 'system' };
+// Addresses that can go into a search query as they are (no spaces or quotes).
+const SEARCHABLE_EMAIL = /^[^\s"'\\:]+@[^\s"'\\:]+$/;
 
 export function createSender({ pool, repository, quotas, mandrill, store, audit, sendQueue, mailer, logger, batchSize }) {
   // Stays within the 64 characters of audit_logs.request_id.
@@ -186,12 +188,28 @@ export function createSender({ pool, repository, quotas, mandrill, store, audit,
       return { accepted: rows.length - rejected, rejected };
     },
 
+    // A batch with an unknown outcome is looked up recipient by recipient by
+    // email (which needs no indexed metadata) and confirmed by the batch_id
+    // Mandrill returns with each message (ADR-029). Only batches older than
+    // the delay of Mandrill's search index are reconciled, so a message not
+    // indexed yet is never taken as not sent and sent twice.
     async reconcile() {
       const summary = { reconciled: 0 };
       for (const { id, campaign_id: campaignId } of await repository.ambiguousBatches(pool)) {
-        let found;
+        const sentEmails = new Map();
         try {
-          found = await mandrill.search({ query: `u_batch_id:"${id}"`, dateFrom: new Date(Date.now() - 86400000).toISOString().slice(0, 10), dateTo: new Date().toISOString().slice(0, 10) });
+          const range = { dateFrom: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), dateTo: new Date().toISOString().slice(0, 10) };
+          const recipients = await repository.batchRecipients(pool, id, ['sending']);
+          // An address that cannot be searched leaves the batch for review: never resent blindly.
+          if (recipients.some(({ email }) => !SEARCHABLE_EMAIL.test(email))) {
+            logger.warn({ batchId: id }, 'ambiguous batch needs manual review: an address cannot be searched');
+            continue;
+          }
+          for (const { email } of recipients) {
+            const found = await mandrill.search({ query: `email:${email}`, ...range, limit: 100 });
+            const match = found.find((message) => message.metadata?.batch_id === id);
+            if (match) sentEmails.set(email.toLowerCase(), match._id);
+          }
         } catch (error) {
           logger.warn({ batchId: id, errorMessage: error.message }, 'reconciliation postponed');
           continue;
@@ -200,7 +218,6 @@ export function createSender({ pool, repository, quotas, mandrill, store, audit,
           const campaign = await repository.lockCampaign(client, campaignId);
           const batch = await repository.lockBatch(client, id);
           if (batch.status !== 'ambiguous') return;
-          const sentEmails = new Map(found.map((message) => [message.email.toLowerCase(), message._id]));
           const recipients = await repository.batchRecipients(client, id, ['sending']);
           const rows = recipients.filter((r) => sentEmails.has(r.email.toLowerCase()))
             .map((r) => ({ email: r.email, status: 'sent', message_id: sentEmails.get(r.email.toLowerCase()), error: null }));

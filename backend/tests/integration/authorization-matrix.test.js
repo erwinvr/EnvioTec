@@ -136,6 +136,7 @@ const MATRIX_CASES = {
   'GET /api/v1/reports/campaigns': { url: () => '/api/v1/reports/campaigns', success: 200 },
   'GET /api/v1/reports/campaigns/:id': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}`, success: 200 },
   'GET /api/v1/reports/campaigns/:id/recipients': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}/recipients`, success: 200 },
+  'GET /api/v1/reports/campaigns/:id/recipients/:recipientId/events': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}/recipients/${f.campaigns.draft}/events`, success: 200 },
   'GET /api/v1/reports/campaigns/:id/export': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}/export`, success: 200 },
   'POST /api/v1/reports/contacts/search': { url: () => '/api/v1/reports/contacts/search', success: 200, payload: () => ({ email: `${PREFIX}.uno@matriz.test` }) },
   'DELETE /api/v1/campaigns/:id': { url: (f) => `/api/v1/campaigns/${f.campaigns.toDelete}`, success: 200 },

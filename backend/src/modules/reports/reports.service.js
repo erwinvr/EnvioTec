@@ -58,6 +58,17 @@ export function createReportsService({ db, repository, audit }) {
       return { items: rows.map(toRecipient(emailFor(auth))), total };
     },
 
+    // Opens and clicks with their details (ADR-029). IP, location and user
+    // agent are personal data: only with contacts.view, like the emails.
+    async recipientEvents(auth, campaignId, recipientId) {
+      await campaignInScope(auth, campaignId);
+      const show = unmasked(auth);
+      return (await repository.recipientEvents(db, campaignId, recipientId)).map((row) => ({
+        type: row.event_type, occurredAt: iso(row.occurred_at), url: row.url, device: row.device, os: row.os, client: row.client,
+        ip: show ? row.ip : null, location: show ? row.location : null, userAgent: show ? row.user_agent : null,
+      }));
+    },
+
     // Searching by address reveals who received what: audited with the
     // email hash only (the address itself is never logged or audited).
     async contact(auth, { email }, { page, pageSize }, context) {

@@ -1335,6 +1335,19 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/campaigns/{id}/recipients/{recipientId}/events:
+    get:
+      summary: 'Eventos de un destinatario con hora, dispositivo, sistema y programa; IP, ubicación y user agent solo con contacts.view (ADR-029)'
+      operationId: listRecipientReportEvents
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: recipientId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Eventos del destinatario }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/Error' }
   /api/v1/reports/campaigns/{id}/export:
     get:
       summary: 'Exportar el reporte de destinatarios en CSV (fórmulas neutralizadas, enmascarado sin contacts.view, auditado)'

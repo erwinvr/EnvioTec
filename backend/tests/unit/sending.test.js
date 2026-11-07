@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { createMandrill, MandrillError } from '../../src/core/mail/mandrill.js';
 import { buildMessage, escapeHtml, recipientValues, toMergeHtml, toMergeText } from '../../src/modules/sending/message.js';
 import { eventKey, eventsOf } from '../../src/modules/sending/sync.service.js';
+import { describeAgent } from '../../src/modules/sending/user-agent.js';
 
 describe('armado del mensaje (ADR-013, ADR-024)', () => {
   it('las variables se escapan una sola vez, en EnvioTec', () => {
@@ -59,5 +60,19 @@ describe('eventos de seguimiento', () => {
     assert.deepEqual(eventKey('m1', 'open', 101), eventKey('m1', 'open', 101));
     assert.notDeepEqual(eventKey('m1', 'open', 101), eventKey('m1', 'open', 102));
     assert.deepEqual(eventsOf({ _id: 'm2', state: 'desconocido', ts: 1 }), []);
+  });
+});
+
+describe('detalle de aperturas y clics (ADR-029)', () => {
+  it('dispositivo, sistema y programa desde el user agent; proxys de imágenes identificados', () => {
+    assert.deepEqual(describeAgent({ ua: null, ip: '74.125.1.2' }), { device: 'proxy', os: null, client: 'Gmail (proxy de imágenes)' });
+    assert.deepEqual(describeAgent({ ua: 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0 Safari/537.36', ip: '1.1.1.1' }),
+      { device: 'desktop', os: 'Windows', client: 'Chrome' });
+    assert.deepEqual(describeAgent({ ua: 'Mozilla/5.0 (Linux; Android 14) Mobile', ip: null }), { device: 'mobile', os: 'Android', client: null });
+    assert.equal(describeAgent({ ua: 'Microsoft Outlook 16.0', ip: null }).client, 'Outlook');
+    assert.equal(describeAgent({ ua: 'YahooMailProxy; https://help.yahoo.com', ip: null }).device, 'proxy');
+    assert.deepEqual(describeAgent({ ua: null, ip: '200.1.1.1' }), { device: null, os: null, client: null });
+    const [, open] = eventsOf({ _id: 'm', state: 'sent', ts: 1, opens_detail: [{ ts: 2, ip: '200.1.1.1', location: 'La Paz, BO', ua: 'Mozilla/5.0 (iPad)' }] });
+    assert.deepEqual(open, { type: 'open', ts: 2, ip: '200.1.1.1', location: 'La Paz, BO', userAgent: 'Mozilla/5.0 (iPad)', device: 'tablet', os: 'iOS', client: null });
   });
 });

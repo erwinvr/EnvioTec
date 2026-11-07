@@ -6,8 +6,10 @@ import http from 'node:http';
 //   'ok'        every recipient sent (except state.reject)
 //   'error'     500 with a Mandrill error body (definite: nothing sent)
 //   'hang'      the request is accepted and never answered (unknown outcome)
+// `indexed: false` makes the metadata search find nothing, as in an account
+// without indexed custom metadata (ADR-029); search by email and info work.
 export async function startMandrillMock() {
-  const state = { mode: 'ok', reject: new Set(), sent: [], messages: [], rejects: [], requests: [] };
+  const state = { mode: 'ok', indexed: true, reject: new Set(), sent: [], messages: [], rejects: [], requests: [] };
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -32,8 +34,15 @@ export async function startMandrillMock() {
       return reply(200, results);
     }
     if (req.url === '/messages/search') {
+      const byEmail = /^email:(\S+)$/.exec(body.query);
+      if (byEmail) return reply(200, state.messages.filter((m) => m.email === byEmail[1].toLowerCase()).slice(0, body.limit ?? 100));
       const [, field, value] = /^u_([a-z_]+):"([^"]+)"$/.exec(body.query) ?? [];
+      if (!state.indexed) return reply(200, []);
       return reply(200, state.messages.filter((m) => m.metadata[field] === value).slice(0, body.limit ?? 100));
+    }
+    if (req.url === '/messages/info') {
+      const message = state.messages.find((m) => m._id === body.id);
+      return message ? reply(200, message) : reply(500, { status: 'error', name: 'Unknown_Message', message: 'No message exists' });
     }
     if (req.url === '/rejects/list') return reply(200, state.rejects);
     return reply(404, { status: 'error', name: 'Unknown_Method' });

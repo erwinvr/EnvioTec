@@ -139,9 +139,9 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 
 | ID | Riesgo | Resolución prevista | Estado |
 | --- | --- | --- | --- |
-| R1 | Polling a Mandrill: retención (30 días según el negocio), límites de `messages/info` y `messages/search`, falta de ID propio por evento | Spike de la fase 0.5; clave de idempotencia derivada (mensaje, tipo, timestamp, URL); búsqueda por lote si se llega al límite de 1000 resultados | Implementado contra el doble; validar en el spike (ADR-024) |
+| R1 | Polling a Mandrill: retención (30 días según el negocio), límites de `messages/info` y `messages/search`, falta de ID propio por evento | Spike de la fase 0.5; clave de idempotencia derivada (mensaje, tipo, timestamp, URL); búsqueda por lote si se llega al límite de 1000 resultados | Validado con Mailchimp real: la búsqueda por metadata requiere índice; respaldo por `messages/info` (ADR-029) |
 | R2 | Ancho de banda del adjunto | Envío por lotes con `merge_vars` por destinatario; confirmar en el spike que hay un `_id` por destinatario | Abierto |
-| R3 | Envío duplicado por timeout tras aceptación | Estado `ambiguous` en `send_batches` y conciliación por metadata antes de reintentar | Implementado (ADR-024); validar la búsqueda por metadata en el spike |
+| R3 | Envío duplicado por timeout tras aceptación | Estado `ambiguous` en `send_batches` y conciliación por metadata antes de reintentar | Conciliación por correo + `batch_id`, sin depender del índice, tras 60 minutos (ADR-029) |
 | R4 | Baja con un clic (RFC 8058) alojada por Mandrill | Verificar en el spike | Abierto |
 | R5 | Fidelidad de la conversión de Word a HTML de correo | Acordar con el negocio el formato soportado; la vista previa muestra el resultado real | Abierto |
 | R6 | Escape de variables en el lenguaje de merge de Mandrill | EnvioTec escapa una vez y usa triple llave; verificar en el spike (ADR-013, ADR-024) | Implementado; validar en el spike |
@@ -518,3 +518,12 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | A8 (mass assignment) | La asociación solo admite campos fijos o variables de la lista; correo obligatorio y sin destinos repetidos; validada en el backend y otra vez en el procesador contra el encabezado real | `contacts.test.js`, `unit/contacts-files.test.js` |
 | Datos personales | La muestra se borra al confirmar o al terminar; las importaciones sin asociar vencen a las 24 horas y su archivo se borra | `contacts.test.js` |
 | Integridad | Una variable con datos no se borra; el nombre técnico no cambia; altas, cambios y bajas de variables auditados | `contacts.test.js`, `authorization-matrix.test.js` |
+
+### Sincronización real con Mailchimp y detalle de aperturas (2026-11-07)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| R3 (envío duplicado) | La conciliación busca por correo y confirma el `batch_id`; solo concilia lotes inciertos de más de 60 minutos; una dirección no buscable deja el lote para revisión manual | `integration/sending.test.js` |
+| R1 (eventos) | Sincronización por metadata indexada con respaldo por `messages/info`, con tope por ciclo | `sending.test.js` |
+| A8 (respuesta externa) | Detalle de aperturas y clics validado por schema; IP aceptada solo si es una dirección válida | `unit/sending.test.js` |
+| Datos personales | IP, ubicación y user agent solo con `contacts.view`; no se exportan | `integration/reports.test.js` |

@@ -4,6 +4,7 @@ import { el, replace } from '../../core/dom.js';
 import { run } from '../../core/feedback.js';
 import { formatDate, t } from '../../core/i18n.js';
 import { dataTable } from '../../components/data-table.js';
+import { openModal } from '../../components/modal.js';
 import { badge, button, definitionList, pageHeader, section } from '../../components/page.js';
 import { saveResponse } from '../download.js';
 import { opensNote, rate } from './campaigns.js';
@@ -25,6 +26,26 @@ export const recipientColumns = () => [
   { key: 'lastEventAt', label: t('reports.lastEvent'), render: (r) => formatDate(r.lastEventAt) },
 ];
 
+// Opens and clicks of one recipient with time, device, system, mail client
+// and (with contacts.view) IP and location, as Mandrill reports them (ADR-029).
+async function showEvents(campaignId, recipient) {
+  const result = await run(() => api.get(`/api/v1/reports/campaigns/${campaignId}/recipients/${recipient.id}/events`));
+  if (!result) return;
+  const cell = (value) => el('td', { text: value ?? '—' });
+  const rows = result.data.map((e) => el('tr', {}, [
+    cell(t(`reports.eventType.${e.type}`)), cell(formatDate(e.occurredAt)),
+    cell(e.device ? t(`reports.device.${e.device}`) : null), cell(e.os), cell(e.client), cell(e.location), cell(e.ip), cell(e.url),
+  ]));
+  const headers = ['reports.event', 'audit.date', 'reports.deviceLabel', 'reports.os', 'reports.client', 'reports.location', 'reports.ip', 'reports.url'];
+  openModal({
+    title: t('reports.eventsOf', { email: recipient.email }), wide: true,
+    content: rows.length === 0 ? el('p', { className: 'empty', text: t('reports.noEvents') }) : el('div', {}, [
+      el('p', { className: 'hint', text: t('reports.eventsHint') }),
+      el('table', { className: 'table' }, [el('thead', {}, [el('tr', {}, headers.map((key) => el('th', { text: t(key) })))]), el('tbody', {}, rows)]),
+    ]),
+  });
+}
+
 export async function render(container, { params }) {
   const result = await run(() => api.get(`/api/v1/reports/campaigns/${params.id}`));
   if (!result) return;
@@ -37,7 +58,10 @@ export async function render(container, { params }) {
       { name: 'status', label: t('users.statusLabel'), type: 'select', options: STATUS_FILTERS.map((v) => ({ value: v, label: t(`reports.statusFilter.${v}`) })) },
       { name: 'event', label: t('reports.event'), type: 'select', options: EVENT_FILTERS.map((v) => ({ value: v, label: t(`reports.eventFilter.${v}`) })) },
     ],
-    columns: [{ key: 'email', label: t('reports.email') }, ...recipientColumns()],
+    columns: [
+      { key: 'email', label: t('reports.email') }, ...recipientColumns(),
+      { key: 'events', label: '', render: (r) => button(t('reports.details'), () => showEvents(c.id, r)) },
+    ],
   });
 
   replace(container, [
