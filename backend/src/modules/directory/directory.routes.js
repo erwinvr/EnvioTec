@@ -3,8 +3,8 @@ import { ok, successSchema } from '../../core/http/response.js';
 import { MAX_DN_LENGTH } from './dn.js';
 import { createDirectoryRepository } from './directory.repository.js';
 import { createDirectoryService } from './directory.service.js';
+import { object } from '../../core/http/schema.js';
 
-const object = (properties, required = []) => ({ type: 'object', additionalProperties: false, required, properties });
 const mapping = object({ id: { type: 'string' }, groupDn: { type: 'string' }, roleId: { type: 'string' }, roleName: { type: 'string' } },
   ['id', 'groupDn', 'roleId', 'roleName']);
 

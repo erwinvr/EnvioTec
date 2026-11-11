@@ -1,4 +1,5 @@
 import { areaCondition } from '../../core/authorization/area-scope.js';
+import { escapeLike } from '../../core/db/sql.js';
 
 // SQL of lists, contacts and imports. Every read and every target of a
 // change goes through the area scope (ADR-008).
@@ -9,8 +10,6 @@ const CONTACT_COLUMNS = 'c.id, c.list_id, c.email, c.first_name, c.last_name, c.
 const IMPORT_COLUMNS = `i.id, i.list_id, i.original_name, i.size_bytes, i.sha256, i.status, i.total_rows, i.inserted, i.updated,
   i.rejected, i.errors, i.failure_reason, i.created_at, i.finished_at, i.header, i.sample, i.mapping, i.file_id, i.area_id,
   u.username AS created_by_username`;
-
-const escapeLike = (text) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 export function createContactsRepository() {
   return {

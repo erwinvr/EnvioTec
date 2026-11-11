@@ -1,4 +1,5 @@
 import { areaCondition } from '../../core/authorization/area-scope.js';
+import { escapeLike } from '../../core/db/sql.js';
 
 // SQL of the users module. Every read for a user (list, detail, target of
 // an action) goes through the area scope (ADR-008). Sort columns come from an
@@ -17,8 +18,6 @@ const SELECT_USER = `
          coalesce((SELECT json_agg(json_build_object('id', r.id, 'name', r.name, 'source', ur.source) ORDER BY r.name)
                      FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id), '[]') AS roles
     FROM users u LEFT JOIN areas a ON a.id = u.area_id`;
-
-const escapeLike = (text) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 function listWhere(scope, filters, params) {
   const conditions = ['u.deleted_at IS NULL', areaCondition(scope, 'u.area_id', params)];

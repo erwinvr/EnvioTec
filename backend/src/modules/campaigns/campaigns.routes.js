@@ -7,11 +7,8 @@ import { createCampaignWorkflow } from './campaign-workflow.service.js';
 import { createCampaignsRepository } from './campaigns.repository.js';
 import { createCampaignsService } from './campaigns.service.js';
 import { MAX_BYTES } from './pdf-rules.js';
+import { idParams, int, nullable, object, pageMeta, paging, uuid } from '../../core/http/schema.js';
 
-const object = (properties, required = [], extra = {}) => ({ type: 'object', additionalProperties: false, required, properties, ...extra });
-const uuid = { type: 'string', format: 'uuid' };
-const nullable = { type: ['string', 'null'] };
-const int = { type: 'integer' };
 const ref = (extra = {}) => object({ id: { type: 'string' }, name: { type: 'string' }, ...extra }, ['id', 'name']);
 const campaign = object({
   id: { type: 'string' }, areaId: { type: 'string' }, areaName: { type: 'string' }, name: { type: 'string' }, status: { type: 'string' },
@@ -25,9 +22,6 @@ const campaign = object({
   rejectionReason: nullable, cancelReason: nullable, cancelledAt: nullable, startedAt: nullable, finishedAt: nullable,
   recipientCount: { type: ['integer', 'null'] }, reserved: int, createdAt: { type: 'string' },
 }, ['id', 'areaId', 'name', 'status', 'subject', 'template', 'list', 'sender', 'attachment', 'createdBy', 'reserved']);
-const pageMeta = object({ total: int, page: int, pageSize: int }, ['total', 'page', 'pageSize']);
-const paging = { page: { type: 'integer', minimum: 1, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 } };
-const idParams = object({ id: uuid }, ['id']);
 const name = { type: 'string', minLength: 2, maxLength: 150, pattern: '\\S' };
 const subject = { type: 'string', minLength: 1, maxLength: 200 };
 const reason = { type: 'string', minLength: 5, maxLength: 500, pattern: '\\S' };

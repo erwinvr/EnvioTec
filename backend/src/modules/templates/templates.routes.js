@@ -4,10 +4,8 @@ import { ok, successSchema } from '../../core/http/response.js';
 import { LIMITS } from './template-rules.js';
 import { createTemplatesRepository } from './templates.repository.js';
 import { createTemplatesService, toVersion } from './templates.service.js';
+import { idParams, int, nullable, object } from '../../core/http/schema.js';
 
-const object = (properties, required = [], extra = {}) => ({ type: 'object', additionalProperties: false, required, properties, ...extra });
-const nullable = { type: ['string', 'null'] };
-const int = { type: 'integer' };
 const version = object({
   id: { type: 'string' }, version: int, status: { type: 'string' }, originalName: { type: 'string' }, sizeBytes: int,
   sha256: { type: 'string' }, variables: { type: 'array', items: { type: 'string' } }, images: int, failureReason: nullable,
@@ -17,7 +15,6 @@ const template = object({
   id: { type: 'string' }, areaId: { type: 'string' }, areaName: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' },
   isArchived: { type: 'boolean' }, latestReadyVersion: { type: ['integer', 'null'] }, versions: { type: 'array', items: version },
 }, ['id', 'areaId', 'areaName', 'name', 'description', 'isArchived', 'latestReadyVersion']);
-const idParams = object({ id: { type: 'string', format: 'uuid' } }, ['id']);
 const versionParams = object({ id: { type: 'string', format: 'uuid' }, version: { type: 'integer', minimum: 1 } }, ['id', 'version']);
 const name = { type: 'string', minLength: 2, maxLength: 100, pattern: '\\S' };
 

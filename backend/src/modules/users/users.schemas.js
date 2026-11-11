@@ -1,19 +1,10 @@
 import { successSchema } from '../../core/http/response.js';
 import { SORT_COLUMNS } from './users.repository.js';
+import { idParams, object, pageMeta, paging, uuid } from '../../core/http/schema.js';
 
-const uuid = { type: 'string', format: 'uuid' };
 const email = { type: 'string', minLength: 3, maxLength: 254, pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$' };
 const displayName = { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' };
 const nullableString = { type: ['string', 'null'] };
-const paging = {
-  page: { type: 'integer', minimum: 1, default: 1 },
-  pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-};
-const object = (properties, required = [], extra = {}) => ({
-  type: 'object', additionalProperties: false, required, properties, ...extra,
-});
-
-export const idParams = object({ id: uuid }, ['id']);
 
 export const listQuery = object({
   ...paging,
@@ -57,8 +48,6 @@ const user = object({
   'mustChangePassword', 'mfaEnabled', 'lockedUntil', 'expiresAt', 'exemptFromExpiry', 'isEmergency', 'lastLoginAt',
   'createdAt', 'roles']);
 
-const pageMeta = object({ total: { type: 'integer' }, page: { type: 'integer' }, pageSize: { type: 'integer' } },
-  ['total', 'page', 'pageSize']);
 
 export const userResponse = successSchema(user);
 export const listResponse = successSchema({ type: 'array', items: user }, pageMeta);
@@ -84,3 +73,4 @@ export const effectivePermissionsResponse = successSchema(object({
     }, ['code', 'description', 'administrative', 'roles']),
   },
 }, ['mfaRequired', 'permissions']));
+export { idParams };

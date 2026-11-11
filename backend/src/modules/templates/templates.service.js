@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, writeFinder } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { FileTooLargeError } from '../../core/files/storage.js';
@@ -32,9 +32,7 @@ export function createTemplatesService({ db, repository, audit, store, fileQueue
   }
 
   // Changes only in the user's own area (ADR-026).
-  const forWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
-    resourceType: 'template', id, find: (scope, { lock = true } = {}) => repository.find(client, scope, id, { forUpdate: forUpdate && lock }),
-  });
+  const forWrite = writeFinder(repository.find, 'template');
 
   return {
     inScope,

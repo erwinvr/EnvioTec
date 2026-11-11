@@ -52,3 +52,12 @@ export async function findForWrite(auth, { resourceType, id, find }) {
   }
   throw new NotFoundError();
 }
+
+// The lookup a service uses before changing a record (ADR-026), built from a
+// repository finder `(db, scope, id, { forUpdate })`. `forUpdate` locks the
+// row in the caller's transaction; `lockByDefault` for services that always do.
+export function writeFinder(finder, resourceType, { lockByDefault = false } = {}) {
+  return (db, auth, id, { forUpdate = lockByDefault } = {}) => findForWrite(auth, {
+    resourceType, id, find: (scope, { lock = true } = {}) => finder(db, scope, id, { forUpdate: forUpdate && lock }),
+  });
+}

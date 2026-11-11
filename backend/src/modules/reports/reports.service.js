@@ -3,13 +3,12 @@ import { actorFrom } from '../../core/audit/audit.service.js';
 import { areaScopeFor } from '../../core/authorization/area-scope.js';
 import { NotFoundError } from '../../core/errors/errors.js';
 import { maskEmail } from '../../core/privacy/mask.js';
+import { iso } from '../../core/http/serialize.js';
 
 // Reports by campaign and by contact (Parte B, ADR-025). Area scope on every
 // query; emails masked for profiles without contacts.view (also in the
 // export); exports and contact lookups audited. Opens are approximate
 // (pixel blocked or preloaded by mail clients): the UI says so.
-
-const iso = (value) => (value ? value.toISOString() : null);
 
 const summary = (row) => ({
   recipients: row.recipients, accepted: row.accepted, rejected: row.rejected, suppressed: row.suppressed, pending: row.pending,

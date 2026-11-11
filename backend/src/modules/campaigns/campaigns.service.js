@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor, findForWrite, writeScopeFor } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, writeFinder, writeScopeFor } from '../../core/authorization/area-scope.js';
 import { hasPermission } from '../../core/authorization/authorization.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
@@ -9,12 +9,11 @@ import { safeFileName } from '../contacts/contacts.service.js';
 import { assertStatus, cleanSubject, editOutcome } from './campaign-rules.js';
 import { checkScheduleByDate, excludedOf, scheduleByDateOf } from './date-schedule.js';
 import { MAX_BYTES } from './pdf-rules.js';
+import { iso } from '../../core/http/serialize.js';
 
 // Campaign data (Parte B): template version + list + PDF + sender +
 // schedule, all of the campaign's own area. Editing a submitted, approved
 // or scheduled campaign returns it to draft and releases its reservation.
-
-const iso = (value) => value?.toISOString() ?? null;
 
 export function toCampaign(row) {
   return {
@@ -43,9 +42,7 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
   }
 
   // Changes only in the user's own area (ADR-026).
-  const forWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
-    resourceType: 'campaign', id, find: (scope, { lock = true } = {}) => repository.find(client, scope, id, { forUpdate: forUpdate && lock }),
-  });
+  const forWrite = writeFinder(repository.find, 'campaign');
 
   // Every referenced object must exist in the campaign's area.
   async function resolveReferences(client, areaId, input) {

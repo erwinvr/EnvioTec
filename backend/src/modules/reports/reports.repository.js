@@ -1,9 +1,8 @@
 import { areaCondition } from '../../core/authorization/area-scope.js';
+import { escapeLike } from '../../core/db/sql.js';
 
 // SQL of the reports (ADR-025). Each recipient's facts come from its send
 // status and its tracking events; every query is filtered by area.
-
-const escapeLike = (text) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 // Recipients matching `where`, with their events summarized. `where`
 // (fragments written here, values as parameters) applies to both the

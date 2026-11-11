@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, writeFinder } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { cleanValue, LIMITS } from './csv-rows.js';
@@ -65,12 +65,8 @@ export function createContactsService({ db, repository, audit }) {
   }
 
   // Changes only in the user's own area (ADR-026).
-  const listForWrite = (client, auth, id, { forUpdate = false } = {}) => findForWrite(auth, {
-    resourceType: 'contact_list', id, find: (scope, { lock = true } = {}) => repository.list(client, scope, id, { forUpdate: forUpdate && lock }),
-  });
-  const contactForWrite = (client, auth, id) => findForWrite(auth, {
-    resourceType: 'contact', id, find: (scope, { lock = true } = {}) => repository.contactInScope(client, scope, id, { forUpdate: lock }),
-  });
+  const listForWrite = writeFinder(repository.list, 'contact_list');
+  const contactForWrite = writeFinder(repository.contactInScope, 'contact', { lockByDefault: true });
 
   return {
     listInScope,

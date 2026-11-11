@@ -1,4 +1,5 @@
 import { successSchema } from '../../core/http/response.js';
+import { idParams } from '../../core/http/schema.js';
 
 const name = { type: 'string', minLength: 2, maxLength: 100, pattern: '\\S' };
 const adDepartment = { type: ['string', 'null'], minLength: 1, maxLength: 200 };
@@ -10,9 +11,7 @@ export const updateBody = {
   type: 'object', additionalProperties: false, minProperties: 1,
   properties: { name, adDepartment, isActive: { type: 'boolean' } },
 };
-export const idParams = {
-  type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', format: 'uuid' } },
-};
+export { idParams };
 
 const area = {
   type: 'object',

@@ -4,12 +4,10 @@ import { CSV_BOM, csvLine } from '../../core/http/csv.js';
 import { ok, successSchema } from '../../core/http/response.js';
 import { createReportsRepository, EVENT_FILTERS, STATUS_FILTERS } from './reports.repository.js';
 import { createReportsService, EXPORT_COLUMNS } from './reports.service.js';
+import { idParams, int, nullable, object, pageMeta, paging } from '../../core/http/schema.js';
 
-const object = (properties, required = []) => ({ type: 'object', additionalProperties: false, required, properties });
-const int = { type: 'integer' };
 const bool = { type: 'boolean' };
 const str = { type: 'string' };
-const nullable = { type: ['string', 'null'] };
 const STATS = ['recipients', 'accepted', 'rejected', 'suppressed', 'pending', 'notSent', 'delivered', 'opened', 'clicked', 'hardBounces', 'softBounces', 'complaints', 'unsubscribes'];
 const stats = object(Object.fromEntries(STATS.map((key) => [key, int])), STATS);
 const campaign = object({
@@ -25,9 +23,6 @@ const contactRow = object({ ...recipientProps, campaignId: str, campaignName: st
 const event = object({
   type: str, occurredAt: nullable, url: nullable, device: nullable, os: nullable, client: nullable, ip: nullable, location: nullable, userAgent: nullable,
 }, ['type', 'occurredAt']);
-const pageMeta = object({ total: int, page: int, pageSize: int }, ['total', 'page', 'pageSize']);
-const paging = { page: { type: 'integer', minimum: 1, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 } };
-const idParams = object({ id: { type: 'string', format: 'uuid' } }, ['id']);
 const date = { type: 'string', format: 'date' };
 
 export async function reportsRoutes(app, { db, audit }) {

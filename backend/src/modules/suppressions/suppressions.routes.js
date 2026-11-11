@@ -2,11 +2,9 @@ import { auditContext } from '../../core/audit/audit.service.js';
 import { ok, successSchema } from '../../core/http/response.js';
 import { createSuppressionsRepository } from './suppressions.repository.js';
 import { createSuppressionsService } from './suppressions.service.js';
+import { int, nullable, object } from '../../core/http/schema.js';
 
-const object = (properties, required = [], extra = {}) => ({ type: 'object', additionalProperties: false, required, properties, ...extra });
 const email = { type: 'string', minLength: 3, maxLength: 254, pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$' };
-const nullable = { type: ['string', 'null'] };
-const int = { type: 'integer' };
 const row = object({
   id: { type: 'string' }, email: nullable, emailHash: { type: 'string' }, reason: { type: 'string' }, source: { type: 'string' },
   note: nullable, createdBy: nullable, createdAt: { type: 'string' },

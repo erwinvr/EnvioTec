@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { findForWrite } from '../../core/authorization/area-scope.js';
+import { writeFinder } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { ConflictError, ValidationError } from '../../core/errors/errors.js';
 import { ATTRIBUTE_PATTERN, cleanValue, RESERVED_VARIABLES, variableNameFrom } from './csv-rows.js';
@@ -36,9 +36,7 @@ export function createVariablesService({ db, repository, audit }) {
   const record = (client, auth, context, action, listId, metadata) => audit.record(client, {
     actor: actorFrom(auth), action, resourceType: 'contact_list', resourceId: listId, result: 'success', context, metadata,
   });
-  const listForWrite = (client, auth, id) => findForWrite(auth, {
-    resourceType: 'contact_list', id, find: (scope, { lock = true } = {}) => repository.list(client, scope, id, { forUpdate: lock }),
-  });
+  const listForWrite = writeFinder(repository.list, 'contact_list', { lockByDefault: true });
   const known = (list, name) => {
     if (!list.attributes.includes(name)) throw new ValidationError([{ field: 'name', code: 'unknown_variable' }]);
   };

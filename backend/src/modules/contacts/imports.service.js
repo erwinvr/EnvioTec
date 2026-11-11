@@ -1,5 +1,5 @@
 import { actorFrom } from '../../core/audit/audit.service.js';
-import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.js';
+import { areaScopeFor, writeFinder } from '../../core/authorization/area-scope.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { FileTooLargeError } from '../../core/files/storage.js';
@@ -28,12 +28,8 @@ export function createImportsService({ db, repository, audit, store, fileQueue }
   const record = (client, auth, context, action, id, metadata) => audit.record(client, {
     actor: actorFrom(auth), action, resourceType: 'contact_import', resourceId: id, result: 'success', context, metadata,
   });
-  const listForWrite = (client, auth, id) => findForWrite(auth, {
-    resourceType: 'contact_list', id, find: (scope) => repository.list(client, scope, id),
-  });
-  const importForWrite = (client, auth, id) => findForWrite(auth, {
-    resourceType: 'contact_import', id, find: (scope, { lock = true } = {}) => repository.importInScope(client, scope, id, { forUpdate: lock }),
-  });
+  const listForWrite = writeFinder(repository.list, 'contact_list');
+  const importForWrite = writeFinder(repository.importInScope, 'contact_import', { lockByDefault: true });
 
   return {
     // Stores the upload in quarantine and queues the scan and preview.

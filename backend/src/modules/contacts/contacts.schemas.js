@@ -1,19 +1,10 @@
 import { successSchema } from '../../core/http/response.js';
+import { idParams, int, nullable, object, pageMeta, paging, uuid } from '../../core/http/schema.js';
 
-const object = (properties, required = [], extra = {}) => ({ type: 'object', additionalProperties: false, required, properties, ...extra });
-const uuid = { type: 'string', format: 'uuid' };
-const nullable = { type: ['string', 'null'] };
-const int = { type: 'integer' };
 const nullableInt = { type: ['integer', 'null'] };
 const attributeName = { type: 'string', pattern: '^[a-z][a-z0-9_]{0,39}$' };
 const attributeValues = { type: 'object', maxProperties: 30, additionalProperties: { type: 'string', maxLength: 500 } };
-const paging = {
-  page: { type: 'integer', minimum: 1, default: 1 },
-  pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-};
-export const pageMeta = object({ total: int, page: int, pageSize: int }, ['total', 'page', 'pageSize']);
 
-export const idParams = object({ id: uuid }, ['id']);
 export const createListBody = object({
   areaId: uuid,
   name: { type: 'string', minLength: 2, maxLength: 100, pattern: '\\S' },
@@ -68,3 +59,4 @@ export const contactsResponse = successSchema({ type: 'array', items: contact },
 export const importResponse = successSchema(importRow);
 export const importsResponse = successSchema({ type: 'array', items: importRow });
 export const emptyResponse = successSchema(object({}));
+export { idParams, pageMeta };

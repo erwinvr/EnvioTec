@@ -2,20 +2,13 @@ import { auditContext } from '../../core/audit/audit.service.js';
 import { ok, successSchema } from '../../core/http/response.js';
 import { createQuotasRepository } from './quotas.repository.js';
 import { createQuotasService } from './quotas.service.js';
+import { int, nullable, object, pageMeta, paging } from '../../core/http/schema.js';
 
-const object = (properties, required = []) => ({ type: 'object', additionalProperties: false, required, properties });
-const int = { type: 'integer' };
 const quota = object({ assigned: int, reserved: int, consumed: int, available: int }, ['assigned', 'reserved', 'consumed', 'available']);
-const nullable = { type: ['string', 'null'] };
 const movement = object({
   id: { type: 'string' }, kind: { type: 'string' }, amount: int, assignedAfter: int, reservedAfter: int, consumedAfter: int,
   campaignId: nullable, reason: nullable, actorUsername: nullable, occurredAt: { type: 'string' },
 }, ['id', 'kind', 'amount', 'assignedAfter', 'reservedAfter', 'consumedAfter', 'campaignId', 'reason', 'actorUsername', 'occurredAt']);
-const paging = {
-  page: { type: 'integer', minimum: 1, default: 1 },
-  pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-};
-const pageMeta = object({ total: int, page: int, pageSize: int }, ['total', 'page', 'pageSize']);
 const detailResponse = successSchema(object({ quota, movements: { type: 'array', items: movement } }, ['quota', 'movements']), pageMeta);
 const userParams = object({ userId: { type: 'string', format: 'uuid' } }, ['userId']);
 

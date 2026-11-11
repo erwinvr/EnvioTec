@@ -2,8 +2,8 @@ import { auditContext } from '../../core/audit/audit.service.js';
 import { ok, successSchema } from '../../core/http/response.js';
 import { createSendersRepository } from './senders.repository.js';
 import { createSendersService } from './senders.service.js';
+import { object } from '../../core/http/schema.js';
 
-const object = (properties, required = [], extra = {}) => ({ type: 'object', additionalProperties: false, required, properties, ...extra });
 const email = { type: 'string', minLength: 3, maxLength: 254, pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$' };
 // No line breaks, angle brackets or quotes: the name goes into a mail header.
 const displayName = { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\r\\n<>"]+$' };
