@@ -21,6 +21,7 @@ import { createQuotasRepository } from './modules/quotas/quotas.repository.js';
 import { createQuotasService } from './modules/quotas/quotas.service.js';
 import { createSender } from './modules/sending/sender.service.js';
 import { createSendingRepository } from './modules/sending/sending.repository.js';
+import { createSyncRepository } from './modules/sending/sync.repository.js';
 import { createSync } from './modules/sending/sync.service.js';
 import { createTemplateResultsHandler } from './modules/templates/jobs/template-results.job.js';
 import { createAccountValidityJob } from './modules/users/jobs/account-validity.job.js';
@@ -86,7 +87,7 @@ const sendWorker = createWorker(QUEUES.send, async (job) => {
 }, config.redis);
 sendWorker.on('failed', (job, error) => logger.error({ kind: job?.data.kind, err: error }, 'send job failed'));
 if (config.sending.enabled) {
-  const sync = createSync({ pool, repository: createSendingRepository(), mandrill, audit, logger });
+  const sync = createSync({ pool, repository: createSyncRepository(), mandrill, audit, logger });
   await scheduler.every('dispatch', 30 * 1000, async () => ({ ...await sender.dispatch(), ...await sender.reconcile() }));
   await scheduler.every('sync', 10 * 60 * 1000, () => sync.run());
 } else {

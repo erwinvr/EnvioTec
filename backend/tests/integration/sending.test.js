@@ -17,6 +17,7 @@ import { GlobalCapReachedError } from '../../src/modules/quotas/quotas.rules.js'
 import { createQuotasService } from '../../src/modules/quotas/quotas.service.js';
 import { createSender } from '../../src/modules/sending/sender.service.js';
 import { createSendingRepository } from '../../src/modules/sending/sending.repository.js';
+import { createSyncRepository } from '../../src/modules/sending/sync.repository.js';
 import { createSync, eventKey } from '../../src/modules/sending/sync.service.js';
 import { createSuppressionsRepository } from '../../src/modules/suppressions/suppressions.repository.js';
 import { createHarness } from '../helpers/auth-fixtures.js';
@@ -34,6 +35,7 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
   let refs;
   const audit = createAuditService();
   const repository = createSendingRepository();
+  const syncRepository = createSyncRepository();
   const queued = [];
   const mails = [];
   const silent = { warn() {}, error() {}, info() {} };
@@ -307,12 +309,12 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
       else message.state = 'bounced';
     }
     mock.state.rejects.push({ email: email('queja'), reason: 'spam' });
-    const sync = createSync({ pool: h.pool, repository, mandrill: createMandrill(mock.config), audit, logger: silent });
+    const sync = createSync({ pool: h.pool, repository: syncRepository, mandrill: createMandrill(mock.config), audit, logger: silent });
     await sync.run();
     await sync.run();
     // At the search limit the campaign is searched batch by batch: same events, none twice.
     const searches = mock.state.requests.length;
-    await createSync({ pool: h.pool, repository, mandrill: createMandrill(mock.config), audit, logger: silent, searchLimit: 1 }).run();
+    await createSync({ pool: h.pool, repository: syncRepository, mandrill: createMandrill(mock.config), audit, logger: silent, searchLimit: 1 }).run();
     assert.ok(mock.state.requests.slice(searches).some((r) => r.body.query?.startsWith('u_batch_id:')));
 
     const { rows: events } = await h.owner.query('SELECT event_type, count(*)::int AS n FROM message_events WHERE campaign_id = $1 GROUP BY 1 ORDER BY 1', [id]);
@@ -343,7 +345,7 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
     );
     mock.state.indexed = false;
     try {
-      const summary = await createSync({ pool: h.pool, repository, mandrill: createMandrill(mock.config), audit, logger: silent, infoPerRun: 1000 }).run();
+      const summary = await createSync({ pool: h.pool, repository: syncRepository, mandrill: createMandrill(mock.config), audit, logger: silent, infoPerRun: 1000 }).run();
       assert.ok(summary.byId >= 1, JSON.stringify(summary));
     } finally {
       mock.state.indexed = true;
