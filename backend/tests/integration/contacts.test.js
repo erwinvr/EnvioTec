@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'node:test';
 import { createAuditService } from '../../src/core/audit/audit.service.js';
 import { createFileStore } from '../../src/core/files/storage.js';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
+import { createContactsRepository } from '../../src/modules/contacts/contacts.repository.js';
 import { createImportExpiryJob } from '../../src/modules/contacts/jobs/import-results.job.js';
 import { createHarness, multipart } from '../helpers/auth-fixtures.js';
 
@@ -165,7 +166,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
 
     const stale = await waitImport((await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('s.csv', 'email\na@b.test\n') })).json().data.id);
     await h.owner.query("UPDATE contact_imports SET created_at = now() - interval '25 hours' WHERE id = $1", [stale.id]);
-    const job = createImportExpiryJob({ pool: h.pool, store: createFileStore(process.env.FILES_DIR ?? '/data/files'), audit: createAuditService(), logger: { warn() {} } });
+    const job = createImportExpiryJob({ pool: h.pool, repository: createContactsRepository(), store: createFileStore(process.env.FILES_DIR ?? '/data/files'), audit: createAuditService(), logger: { warn() {} } });
     assert.ok((await job()).expired >= 1);
     assert.equal((await call('GET', `/api/v1/imports/${stale.id}`)).json().data.failureReason, 'mapping_expired');
   });

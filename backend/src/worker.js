@@ -15,6 +15,9 @@ import { createMandrill } from './core/mail/mandrill.js';
 import { createQueue, createWorker, QUEUES } from './core/queue/queues.js';
 import { createRedisClient } from './core/redis/client.js';
 import { createAuthRepository } from './modules/auth/auth.repository.js';
+import { createCampaignsRepository } from './modules/campaigns/campaigns.repository.js';
+import { createContactsRepository } from './modules/contacts/contacts.repository.js';
+import { createTemplatesRepository } from './modules/templates/templates.repository.js';
 import { createAttachmentResultsHandler } from './modules/campaigns/jobs/attachment-results.job.js';
 import { createImportExpiryJob, createImportPreviewHandler, createImportResultsHandler } from './modules/contacts/jobs/import-results.job.js';
 import { createQuotasRepository } from './modules/quotas/quotas.repository.js';
@@ -54,13 +57,15 @@ await scheduler.every('ad-review', AD_REVIEW_MS, createAdReviewJob({
 
 // Outcomes of the isolated file inspection (ADR-004), applied with the database.
 const store = createFileStore(config.files.dir);
+// The worker is the composition root: it builds every repository and injects it.
+const contactsRepository = createContactsRepository();
 const FILE_RESULT_HANDLERS = {
-  contacts_csv_preview: createImportPreviewHandler({ pool, audit }),
-  contacts_csv: createImportResultsHandler({ pool, store, audit, logger }),
-  template_docx: createTemplateResultsHandler({ pool, store, audit, logger }),
-  campaign_pdf: createAttachmentResultsHandler({ pool, store, audit }),
+  contacts_csv_preview: createImportPreviewHandler({ pool, repository: contactsRepository, audit }),
+  contacts_csv: createImportResultsHandler({ pool, repository: contactsRepository, store, audit, logger }),
+  template_docx: createTemplateResultsHandler({ pool, repository: createTemplatesRepository(), store, audit, logger }),
+  campaign_pdf: createAttachmentResultsHandler({ pool, repository: createCampaignsRepository(), store, audit }),
 };
-await scheduler.every('import-expiry', HOUR_MS, createImportExpiryJob({ pool, store, audit, logger }));
+await scheduler.every('import-expiry', HOUR_MS, createImportExpiryJob({ pool, repository: contactsRepository, store, audit, logger }));
 const fileResults = createWorker(QUEUES.fileResults, async (job) => {
   const handler = FILE_RESULT_HANDLERS[job.data.kind];
   if (!handler) throw new Error(`unknown file kind: ${job.data.kind}`);

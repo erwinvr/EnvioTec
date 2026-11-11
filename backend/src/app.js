@@ -16,6 +16,7 @@ import { registerResponseHeaders } from './core/security/response-headers.js';
 import { areasRoutes } from './modules/areas/areas.routes.js';
 import { auditLogsRoutes } from './modules/audit-logs/audit-logs.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { createAuthRepository } from './modules/auth/auth.repository.js';
 import { createAuthServices } from './modules/auth/auth.services.js';
 import { campaignsRoutes } from './modules/campaigns/campaigns.routes.js';
 import { contactsRoutes } from './modules/contacts/contacts.routes.js';
@@ -72,6 +73,7 @@ export async function buildApp({
   const ad = createAdProvider(config.ad, { clientFactory: adClientFactory, logger });
   const services = createAuthServices({
     db,
+    repository: createAuthRepository(),
     config,
     audit,
     mfaPolicy,

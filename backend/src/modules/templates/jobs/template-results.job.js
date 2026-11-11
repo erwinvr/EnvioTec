@@ -1,12 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { withTransaction } from '../../../core/db/transaction.js';
-import { createTemplatesRepository } from '../templates.repository.js';
 
 // Worker side of a template upload (ADR-004): stores the converted version
 // and moves its images to the private store. Idempotent: a repeated result
 // finds the version already processed.
-export function createTemplateResultsHandler({ pool, store, audit, logger }) {
-  const repository = createTemplatesRepository();
+export function createTemplateResultsHandler({ pool, repository, store, audit, logger }) {
 
   return async function handle({ fileId, outcome }) {
     // Images written by a rejected inspection are removed; accepted ones move.

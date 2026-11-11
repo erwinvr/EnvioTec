@@ -1,6 +1,5 @@
 import { createInterface } from 'node:readline';
 import { withTransaction } from '../../../core/db/transaction.js';
-import { createContactsRepository } from '../contacts.repository.js';
 
 // Worker side of a contacts import (ADR-004): applies the file-processor's
 // outcome. Valid rows are upserted in batches inside one transaction, so the
@@ -9,8 +8,7 @@ import { createContactsRepository } from '../contacts.repository.js';
 
 const BATCH = 500;
 
-export function createImportResultsHandler({ pool, store, audit, logger }) {
-  const repository = createContactsRepository();
+export function createImportResultsHandler({ pool, repository, store, audit, logger }) {
 
   async function* batches(fileId) {
     const lines = createInterface({ input: store.read('results', fileId), crlfDelay: Infinity });
@@ -62,8 +60,7 @@ export function createImportResultsHandler({ pool, store, audit, logger }) {
 // Outcome of the preview (ADR-028): the header and sample are stored for
 // the user to map columns; the upload stays in quarantine. A rejected file
 // (malware, not text, empty) ends the import here.
-export function createImportPreviewHandler({ pool, audit }) {
-  const repository = createContactsRepository();
+export function createImportPreviewHandler({ pool, repository, audit }) {
   return async function handle({ fileId, outcome }) {
     await withTransaction(pool, async (client) => {
       const pending = await repository.previewImportByFile(client, fileId);
@@ -86,8 +83,7 @@ export function createImportPreviewHandler({ pool, audit }) {
 // quarantine is deleted and the import ends as failed (audited).
 export const MAPPING_EXPIRY_HOURS = 24;
 
-export function createImportExpiryJob({ pool, store, audit, logger }) {
-  const repository = createContactsRepository();
+export function createImportExpiryJob({ pool, repository, store, audit, logger }) {
   return async function run() {
     const expired = await withTransaction(pool, async (client) => {
       const rows = await repository.expiredAwaitingImports(client, MAPPING_EXPIRY_HOURS);

@@ -1,10 +1,8 @@
 import { withTransaction } from '../../../core/db/transaction.js';
-import { createCampaignsRepository } from '../campaigns.repository.js';
 
 // Worker side of a campaign PDF (ADR-004): an approved file moves to the
 // private store (stored/); a rejected one leaves nothing behind. Idempotent.
-export function createAttachmentResultsHandler({ pool, store, audit }) {
-  const repository = createCampaignsRepository();
+export function createAttachmentResultsHandler({ pool, repository, store, audit }) {
 
   return async function handle({ fileId, outcome }) {
     let approved = false;

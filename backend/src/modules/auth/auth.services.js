@@ -1,6 +1,5 @@
 import { createLocalProvider } from '../../core/auth/providers/local.provider.js';
 import { createAccountService } from './account.service.js';
-import { createAuthRepository } from './auth.repository.js';
 import { createCredentialsService } from './credentials.service.js';
 import { createLoginService } from './login.service.js';
 import { createMfaRepository } from './mfa.repository.js';
@@ -11,8 +10,7 @@ import { createSessionIssuer } from './session-issuer.js';
 // Wires the authentication services. `ad` is the AD provider (disabled when
 // AD_ENABLED=false), `mailer` the system mailer and `limiter` the Redis rate
 // limiter.
-export function createAuthServices({ db, config, audit, limiter, ad, mailer, mfaPolicy, logger }) {
-  const repository = createAuthRepository();
+export function createAuthServices({ db, repository, config, audit, limiter, ad, mailer, mfaPolicy, logger }) {
   const local = createLocalProvider({ argon2: config.argon2 });
   const issuer = createSessionIssuer({ db, config, mfaPolicy });
   const credentials = createCredentialsService({ db, repository, audit, local, ad, lockout: config.lockout });
