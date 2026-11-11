@@ -58,7 +58,8 @@ MÓDULOS DE NEGOCIO:
     más variables propias por lista, cada una con nombre técnico validado
     (^[a-z][a-z0-9_]{0,39}$) y etiqueta; una variable con datos no se borra.
     La importación CSV asocia cada columna a un campo o variable de la
-    lista antes de importar (ADR-028).
+    lista antes de importar (ADR-028). Las variables son de tipo texto o
+    fecha; las fechas se cargan como DD/MM/AAAA (ADR-030).
     Permisos: contacts.view, contacts.create, contacts.update, contacts.import,
     contacts.export, contacts.delete, suppressions.view, suppressions.manage
   - Campañas: plantilla + lista + PDF opcional + remitente + programación; flujo
@@ -69,6 +70,10 @@ MÓDULOS DE NEGOCIO:
       a borrador, libera la cuota reservada y requiere una nueva aprobación.
     - Enviando o en pausa: no se edita; solo se puede cancelar.
     - Las variables de la plantilla deben existir en la lista elegida.
+    - Programación al aprobarse, en una fecha y hora fija, o según una
+      variable de fecha de cada contacto (con desfase en días y hora de
+      envío); en este caso se excluyen e informan los contactos sin fecha,
+      con fecha ya pasada o a más de 365 días (ADR-030).
     - Envío de prueba: solo al correo del propio usuario o a dominios internos
       permitidos (system_settings), máximo 5 por usuario por día; descuenta
       del saldo de cuota y del tope global.

@@ -224,6 +224,31 @@ describe('envío y sincronización', { skip: !enabled && 'requiere RUN_INTEGRATI
     assert.deepEqual(message.attachments, []);
   });
 
+  it('según fecha del contacto: cada ciclo envía solo a quienes ya les toca y la campaña termina con el último (ADR-030)', async () => {
+    mock.state.mode = 'ok';
+    const id = await approvedCampaign([['hoy', 'Hoy'], ['manana', 'Mañana']]);
+    await h.owner.query("UPDATE campaign_recipients SET send_at = now() - interval '1 minute' WHERE campaign_id = $1 AND email = $2", [id, email('hoy')]);
+    await h.owner.query("UPDATE campaign_recipients SET send_at = now() + interval '1 day' WHERE campaign_id = $1 AND email = $2", [id, email('manana')]);
+    const sender = senderWith();
+    const first = await started(sender, id);
+    assert.equal(first.length, 1, 'solo el lote de hoy');
+    await sender.sendBatch(first[0]);
+    await sender.dispatch();
+    assert.equal((await campaignStatus(id)).status, 'sending', 'no termina mientras queda alguien por fecha');
+    assert.equal((await recipients(id)).manana.status, 'pending');
+
+    await h.owner.query("UPDATE campaign_recipients SET send_at = now() - interval '1 minute' WHERE campaign_id = $1 AND email = $2", [id, email('manana')]);
+    queued.length = 0;
+    await sender.dispatch();
+    const second = (await batches(id)).filter((b) => b.status === 'pending');
+    assert.equal(second.length, 1, 'el lote de mañana se arma cuando llega su fecha');
+    await sender.sendBatch(second[0].id);
+    await sender.dispatch();
+    assert.deepEqual(await campaignStatus(id), { status: 'completed', reserved: 0 });
+    const r = await recipients(id);
+    assert.deepEqual([r.hoy.status, r.manana.status], ['sent', 'sent']);
+  });
+
   it('campaña cancelada: sus lotes pendientes no se envían', async () => {
     const id = await approvedCampaign([['ines', 'Ines']]);
     const sender = senderWith();

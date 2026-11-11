@@ -7,6 +7,7 @@ import { FileTooLargeError } from '../../core/files/storage.js';
 import { maskEmail } from '../../core/privacy/mask.js';
 import { safeFileName } from '../contacts/contacts.service.js';
 import { assertStatus, cleanSubject, editOutcome } from './campaign-rules.js';
+import { checkScheduleByDate, excludedOf, scheduleByDateOf } from './date-schedule.js';
 import { MAX_BYTES } from './pdf-rules.js';
 
 // Campaign data (Parte B): template version + list + PDF + sender +
@@ -18,7 +19,7 @@ const iso = (value) => value?.toISOString() ?? null;
 export function toCampaign(row) {
   return {
     id: row.id, areaId: row.area_id, areaName: row.area_name, name: row.name, status: row.status, subject: row.subject,
-    scheduledAt: iso(row.scheduled_at),
+    scheduledAt: iso(row.scheduled_at), scheduleByDate: scheduleByDateOf(row), excluded: excludedOf(row),
     template: { id: row.template_id, name: row.template_name, version: row.template_version, versionId: row.template_version_id },
     list: { id: row.list_id, name: row.list_name },
     sender: { id: row.sender_id, email: row.sender_email, name: row.sender_name },
@@ -55,7 +56,10 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
     if (!refs.list) problems.push({ field: 'listId', code: 'invalid_list' });
     if (!refs.sender || !refs.sender.is_active) problems.push({ field: 'senderId', code: 'invalid_sender' });
     if (problems.length > 0) throw new ValidationError(problems);
-    return templateVersionId;
+    // Sending by each contact's date (ADR-030): a date variable of this list,
+    // and never together with a fixed date and time.
+    if (input.scheduleByDate && input.scheduledAt) throw new ValidationError([{ field: 'scheduledAt', code: 'schedule_conflict' }]);
+    return { templateVersionId, scheduleByDate: checkScheduleByDate(input.scheduleByDate, refs.list) };
   }
 
   function scheduleOf(value) {
@@ -83,9 +87,9 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
       const areaId = await repository.listArea(db, writeScopeFor(auth), input.listId);
       if (!areaId) throw new ValidationError([{ field: 'listId', code: 'invalid_list' }]);
       return withTransaction(db, async (client) => {
-        const templateVersionId = await resolveReferences(client, areaId, input);
+        const { templateVersionId, scheduleByDate } = await resolveReferences(client, areaId, input);
         const id = await repository.create(client, {
-          ...input, areaId, templateVersionId, subject: cleanSubject(input.subject), scheduledAt: scheduleOf(input.scheduledAt), actorId: auth.user.id,
+          ...input, areaId, templateVersionId, scheduleByDate, subject: cleanSubject(input.subject), scheduledAt: scheduleOf(input.scheduledAt), actorId: auth.user.id,
         });
         await record(client, auth, context, 'campaign.create', id, { name: input.name, listId: input.listId, templateVersionId });
         return toCampaign(await repository.find(client, { all: true }, id));
@@ -103,9 +107,11 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
           templateVersionId: changes.templateId ? undefined : (changes.templateVersionId ?? before.template_version_id),
           listId: changes.listId ?? before.list_id,
           senderId: changes.senderId ?? before.sender_id,
-          scheduledAt: 'scheduledAt' in changes ? scheduleOf(changes.scheduledAt) : before.scheduled_at,
+          // A by-date campaign's scheduled_at is derived at approval, not chosen.
+          scheduledAt: 'scheduledAt' in changes ? scheduleOf(changes.scheduledAt) : (before.schedule_variable ? null : before.scheduled_at),
+          scheduleByDate: 'scheduleByDate' in changes ? changes.scheduleByDate : scheduleByDateOf(before),
         };
-        merged.templateVersionId = await resolveReferences(client, before.area_id, merged);
+        Object.assign(merged, await resolveReferences(client, before.area_id, merged));
         if (outcome.releaseReservation && before.reserved > 0) {
           await quotas.release(client, { userId: before.created_by, amount: before.reserved, campaignId: id, actor: actorFrom(auth), context });
         }
@@ -185,7 +191,7 @@ export function createCampaignsService({ db, repository, audit, quotas, store, f
         total,
         items: rows.map((row) => ({
           id: row.id, email: unmasked ? row.email : maskEmail(row.email), firstName: unmasked ? row.first_name : null,
-          lastName: unmasked ? row.last_name : null, status: row.status, sentAt: iso(row.sent_at), error: row.error,
+          lastName: unmasked ? row.last_name : null, status: row.status, sentAt: iso(row.sent_at), error: row.error, sendAt: iso(row.send_at),
         })),
       };
     },

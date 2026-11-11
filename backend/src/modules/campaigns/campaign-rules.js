@@ -49,6 +49,10 @@ export function assertReadyToSubmit({ campaign, version, list, sender, attachmen
   if (!campaign.subject) problems.push({ field: 'subject', code: 'required' });
   if (campaign.scheduled_at && new Date(campaign.scheduled_at) <= new Date()) problems.push({ field: 'scheduledAt', code: 'in_the_past' });
   if (recipientsInList === 0) problems.push({ field: 'listId', code: 'empty_list' });
+  // Sending by date (ADR-030): the variable must still be a date variable of the list.
+  if (campaign.schedule_variable && (!list?.attributes?.includes(campaign.schedule_variable) || list.attribute_types?.[campaign.schedule_variable] !== 'date')) {
+    problems.push({ field: 'scheduleByDate.variable', code: 'invalid_schedule_variable' });
+  }
   if (version && list) {
     for (const name of missingVariables(version.variables, list.attributes)) problems.push({ field: 'templateVersionId', code: 'missing_variable', variable: name });
   }

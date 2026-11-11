@@ -4,6 +4,7 @@ import { auditContext } from '../../core/audit/audit.service.js';
 import { CSV_BOM, csvLine } from '../../core/http/csv.js';
 import { ok } from '../../core/http/response.js';
 import { LIMITS } from './csv-rows.js';
+import { formatDate, isDateVariable } from './dates.js';
 import { createContactsRepository } from './contacts.repository.js';
 import * as s from './contacts.schemas.js';
 import { createContactsService, toList } from './contacts.service.js';
@@ -80,7 +81,8 @@ export async function contactsRoutes(app, { db, audit, store, fileQueue }) {
     async function* lines() {
       yield CSV_BOM + csvLine(['email', 'first_name', 'last_name', ...list.attributes]);
       for await (const rows of batches) {
-        for (const row of rows) yield csvLine([row.email, row.first_name, row.last_name, ...list.attributes.map((a) => row.attributes[a] ?? '')]);
+        // Date variables as DD/MM/AAAA, the format they are imported in (ADR-030).
+        for (const row of rows) yield csvLine([row.email, row.first_name, row.last_name, ...list.attributes.map((a) => (isDateVariable(list.attribute_types, a) ? formatDate(row.attributes[a] ?? '') : row.attributes[a] ?? ''))]);
       }
     }
     reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="contactos-${list.id}.csv"`);

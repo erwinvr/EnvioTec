@@ -22,6 +22,10 @@ export async function campaignForm({ campaign, onSaved }) {
   // Only the user's own area: a campaign is created and changed there even
   // when the user can read every area (ADR-026).
   const ownArea = auth.currentUser()?.areaId;
+  const byDate = campaign?.scheduleByDate ?? null;
+  // Date variables of the lists of the user's area, named after their list.
+  const dateVariables = (lists?.data ?? []).filter((l) => l.areaId === ownArea).flatMap((l) => l.variables
+    .filter((v) => v.type === 'date').map((v) => ({ value: v.name, label: `${v.label} · {{${v.name}}} (${l.name})` })));
   const options = (items, label) => [{ value: '', label: '—' }, ...(items?.data ?? [])
     .filter((item) => item.areaId === ownArea).map((item) => ({ value: item.id, label: label(item) }))];
   const form = createForm({
@@ -34,11 +38,27 @@ export async function campaignForm({ campaign, onSaved }) {
       },
       { name: 'listId', label: t('lists.name'), type: 'select', required: true, value: campaign?.list.id, options: options(lists, (l) => `${l.name} (${l.contactCount})`) },
       { name: 'senderId', label: t('campaigns.sender'), type: 'select', required: true, value: campaign?.sender.id, options: options(senders, (s) => `${s.displayName} <${s.email}>`) },
+      {
+        name: 'scheduleMode', label: t('campaigns.scheduleMode'), type: 'select', value: byDate ? 'by_date' : (campaign?.scheduledAt ? 'at' : 'now'),
+        options: ['now', 'at', 'by_date'].map((mode) => ({ value: mode, label: t(`campaigns.scheduleModes.${mode}`) })),
+      },
       { name: 'scheduledAt', label: t('campaigns.scheduledAt'), type: 'datetime-local', hint: t('campaigns.scheduledHint') },
+      // Sending by each contact's date (ADR-030).
+      {
+        name: 'scheduleVariable', label: t('campaigns.scheduleVariable'), type: 'select', value: byDate?.variable ?? '', hint: t('campaigns.scheduleVariableHint'),
+        options: [{ value: '', label: '—' }, ...dateVariables],
+      },
+      { name: 'offsetDays', label: t('campaigns.offsetDays'), type: 'number', min: -365, max: 365, value: byDate?.offsetDays ?? 0, hint: t('campaigns.offsetDaysHint') },
+      { name: 'sendTime', label: t('campaigns.sendTime'), type: 'time', value: byDate?.time ?? '09:00', hint: t('campaigns.sendTimeHint') },
     ],
     submitLabel: t('common.save'),
     onSubmit: async (values) => {
-      const body = { ...values, scheduledAt: toIso(values.scheduledAt) };
+      const { scheduleMode, scheduleVariable, offsetDays, sendTime, ...rest } = values;
+      const body = {
+        ...rest,
+        scheduledAt: scheduleMode === 'at' ? toIso(values.scheduledAt) : null,
+        scheduleByDate: scheduleMode === 'by_date' ? { variable: scheduleVariable, offsetDays: Number(offsetDays || 0), time: sendTime || '09:00' } : null,
+      };
       const result = await run(() => (campaign ? api.patch(`/api/v1/campaigns/${campaign.id}`, body) : api.post('/api/v1/campaigns', body)), { form });
       if (result) onSaved(result.data);
     },

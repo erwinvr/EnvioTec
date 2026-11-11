@@ -109,6 +109,7 @@ export async function render(container, { params }) {
       { key: 'email', label: t('users.email') },
       { key: 'status', label: t('users.statusLabel'), render: (r) => t(`campaigns.recipientStatus.${r.status}`) },
       { key: 'sentAt', label: t('campaigns.sentAt'), render: (r) => formatDate(r.sentAt) },
+      ...(c.scheduleByDate ? [{ key: 'sendAt', label: t('campaigns.sendAt'), render: (r) => formatDate(r.sendAt) }] : []),
     ],
   }) : null;
 
@@ -121,7 +122,14 @@ export async function render(container, { params }) {
       [t('nav.templates'), `${c.template.name} (v${c.template.version})`],
       [t('lists.name'), c.list.name],
       [t('campaigns.sender'), `${c.sender.name} <${c.sender.email}>`],
-      [t('campaigns.scheduledAt'), c.scheduledAt ? formatDate(c.scheduledAt) : t('campaigns.asSoonAsApproved')],
+      // Sending by each contact's date (ADR-030), or a fixed moment.
+      c.scheduleByDate
+        ? [t('campaigns.scheduleMode'), t('campaigns.byDateSummary', {
+          variable: `{{${c.scheduleByDate.variable}}}`, offset: c.scheduleByDate.offsetDays, time: c.scheduleByDate.time,
+        })]
+        : [t('campaigns.scheduledAt'), c.scheduledAt ? formatDate(c.scheduledAt) : t('campaigns.asSoonAsApproved')],
+      ...(c.scheduleByDate && c.scheduledAt ? [[t('campaigns.firstSend'), formatDate(c.scheduledAt)]] : []),
+      ...(c.excluded ? [[t('campaigns.excluded'), t('campaigns.excludedSummary', c.excluded)]] : []),
       [t('campaigns.attachment'), c.attachment ? el('span', {}, [c.attachment.name, badge(t(`templates.status.${c.attachment.status}`), c.attachment.status === 'ready' ? 'ok' : 'warning'),
         c.attachment.failureReason ? ` ${known(`campaigns.pdfReasons.${c.attachment.failureReason}`, c.attachment.failureReason)}` : null]) : '—'],
       [t('campaigns.createdBy'), c.createdBy],

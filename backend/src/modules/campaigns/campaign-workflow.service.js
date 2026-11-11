@@ -6,6 +6,7 @@ import {
   assertApprover, assertCancellable, assertReadyToSubmit, assertStatus, assertTestRecipient, assertTestSendsLeft,
 } from './campaign-rules.js';
 import { toCampaign } from './campaigns.service.js';
+import { scheduleByDateOf, WINDOW_DAYS } from './date-schedule.js';
 
 // Campaign workflow (Parte B, ADR-011): submit, approve (snapshot +
 // quota reservation in one transaction), reject, cancel, pause, resume and
@@ -66,12 +67,29 @@ export function createCampaignWorkflow({ db, repository, campaigns, audit, quota
         if (!creator?.present || creator.status !== 'active' || !creator.in_validity) {
           throw new ConflictError('La cuenta que creó la campaña no está activa o vigente: su saldo no se puede usar');
         }
-        const count = await repository.snapshotRecipients(client, id, campaign.list_id);
-        if (count === 0) throw new ValidationError([{ field: 'listId', code: 'no_recipients' }], 'Todos los contactos están suprimidos');
+        const byDate = scheduleByDateOf(campaign);
+        let count;
+        let scheduledAt = campaign.scheduled_at;
+        let excluded = {};
+        if (byDate) {
+          // ADR-030: each recipient on its own date; the rest left out and counted.
+          const snapshot = await repository.snapshotRecipientsByDate(client, id, campaign.list_id, byDate, WINDOW_DAYS);
+          count = snapshot.count;
+          scheduledAt = snapshot.first_send_at;
+          excluded = { excluded_no_date: snapshot.no_date, excluded_past: snapshot.past, excluded_too_far: snapshot.too_far };
+          if (count === 0) {
+            throw new ValidationError([{ field: 'scheduleByDate', code: 'no_recipients_in_window' }], 'Ningún contacto tiene una fecha de envío dentro de la ventana');
+          }
+        } else {
+          count = await repository.snapshotRecipients(client, id, campaign.list_id);
+          if (count === 0) throw new ValidationError([{ field: 'listId', code: 'no_recipients' }], 'Todos los contactos están suprimidos');
+        }
         await quotas.reserve(client, { userId: campaign.created_by, amount: count, campaignId: id, actor: actorFrom(auth), context });
-        const status = campaign.scheduled_at && new Date(campaign.scheduled_at) > new Date() ? 'scheduled' : 'approved';
-        await repository.setStatus(client, id, status, { approved_by: auth.user.id, approved_at: new Date(), recipient_count: count, reserved: count });
-        await record(client, auth, context, 'campaign.approve', id, { recipients: count, status });
+        const status = scheduledAt && new Date(scheduledAt) > new Date() ? 'scheduled' : 'approved';
+        await repository.setStatus(client, id, status, {
+          approved_by: auth.user.id, approved_at: new Date(), recipient_count: count, reserved: count, ...(byDate ? { scheduled_at: scheduledAt } : {}), ...excluded,
+        });
+        await record(client, auth, context, 'campaign.approve', id, { recipients: count, status, byDate: byDate !== null, ...excluded });
         return reload(client, id);
       });
     },

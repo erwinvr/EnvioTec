@@ -67,7 +67,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     const created = await call('POST', '/api/v1/lists', { name: 'Clientes', variables: [{ label: 'Ciudad' }, { label: 'Plan', name: 'plan' }] });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().data.areaId, h.areaId);
-    assert.deepEqual(created.json().data.variables, [{ name: 'ciudad', label: 'Ciudad' }, { name: 'plan', label: 'Plan' }]);
+    assert.deepEqual(created.json().data.variables, [{ name: 'ciudad', label: 'Ciudad', type: 'text' }, { name: 'plan', label: 'Plan', type: 'text' }]);
     assert.equal((await call('POST', '/api/v1/lists', { name: 'Mala', attributes: ['Email'] })).statusCode, 422);
     const reserved = await call('POST', '/api/v1/lists', { name: 'Mala', attributes: ['email'] });
     assert.equal(reserved.json().error.details[0].code, 'reserved_variable', 'nombre reservado');
@@ -96,7 +96,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     const list = (await call('POST', '/api/v1/lists', { name: 'Con variables' })).json().data;
     const added = await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Número de póliza' });
     assert.equal(added.statusCode, 201, added.body);
-    assert.deepEqual(added.json().data.variables, [{ name: 'numero_de_poliza', label: 'Número de póliza' }]);
+    assert.deepEqual(added.json().data.variables, [{ name: 'numero_de_poliza', label: 'Número de póliza', type: 'text' }]);
     assert.equal((await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Nombre' })).json().error.details[0].code, 'reserved_variable');
     assert.equal((await call('POST', `/api/v1/lists/${list.id}/variables`, { label: 'Otra', name: 'numero_de_poliza' })).statusCode, 409);
     const relabeled = await call('PATCH', `/api/v1/lists/${list.id}/variables/numero_de_poliza`, { label: 'Póliza' });
@@ -109,6 +109,19 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     assert.equal(inUse.json().error.details[0].code, 'variable_in_use');
     assert.equal((await call('PATCH', `/api/v1/lists/${list.id}`, { attributes: [] })).statusCode, 422, 'las variables no se cambian por PATCH de la lista');
     assert.equal((await h.audits('list.variable_add', list.id)).length, 2);
+  });
+
+  it('variables de fecha: DD/MM/AAAA en el contacto y en el CSV; inválidas rechazadas; exportación en DD/MM/AAAA (ADR-030)', async () => {
+    const list = (await call('POST', '/api/v1/lists', { name: 'Vencimientos', variables: [{ label: 'Vence', type: 'date' }] })).json().data;
+    assert.deepEqual(list.variables, [{ name: 'vence', label: 'Vence', type: 'date' }]);
+    const ok = await call('POST', `/api/v1/lists/${list.id}/contacts`, { email: 'v1@empresa.test', attributes: { vence: '05/03/2027' } });
+    assert.equal(ok.json().data.attributes.vence, '2027-03-05');
+    const bad = await call('POST', `/api/v1/lists/${list.id}/contacts`, { email: 'v2@empresa.test', attributes: { vence: '31/02/2027' } });
+    assert.equal(bad.json().error.details[0].code, 'invalid_date');
+    const done = await importCsv(list.id, 'Correo;Vencimiento\nv3@empresa.test;7/4/2027\nv4@empresa.test;2027/04/07\n', ['email', 'vence']);
+    assert.deepEqual([done.inserted, done.rejected, done.errors[0].code], [1, 1, 'invalid_date']);
+    const csv = (await call('GET', `/api/v1/lists/${list.id}/export`)).body;
+    assert.ok(csv.includes('"07/04/2027"') && csv.includes('"05/03/2027"'), csv);
   });
 
   it('importación CSV en dos pasos: vista previa, asociación de columnas, deduplicación y upsert', async () => {

@@ -527,3 +527,12 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | R1 (eventos) | Sincronización por metadata indexada con respaldo por `messages/info`, con tope por ciclo | `sending.test.js` |
 | A8 (respuesta externa) | Detalle de aperturas y clics validado por schema; IP aceptada solo si es una dirección válida | `unit/sending.test.js` |
 | Datos personales | IP, ubicación y user agent solo con `contacts.view`; no se exportan | `integration/reports.test.js` |
+
+### Variables de fecha y envío según fecha del contacto (2026-11-11)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A8 (validación de entrada) | Fechas validadas como fechas reales (DD/MM/AAAA) en el alta manual y fila por fila en el CSV; guardadas como AAAA-MM-DD | `unit/dates.test.js`, `integration/contacts.test.js` |
+| T13 / ADR-011 (cuota) | Al aprobar se reserva solo la cuota de los destinatarios dentro de la ventana de 365 días; el consumo ocurre en cada envío diario | `integration/campaigns.test.js` |
+| T12 (contenido aprobado) | La foto con la fecha de envío de cada destinatario queda fija al aprobar | `campaigns.test.js` |
+| T39 / tope global | Supresión y tope global aplicados en cada envío diario; pausa y cancelación detienen los días siguientes | `integration/sending.test.js` |

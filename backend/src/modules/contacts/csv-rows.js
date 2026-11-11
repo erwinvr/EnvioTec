@@ -1,6 +1,8 @@
 // CSV rules for contact imports (Parte B, ADR-004), as pure functions. Used
 // by the file-processor, which never touches the database.
 
+import { isDateVariable, parseDate } from './dates.js';
+
 export const FIXED_COLUMNS = Object.freeze(['email', 'first_name', 'last_name']);
 export const LIMITS = Object.freeze({
   maxBytes: 10 * 1024 * 1024, maxRows: 100000, maxErrors: 100, maxValue: 500, maxColumns: 50, sampleRows: 3, previewValue: 100,
@@ -34,8 +36,9 @@ export function cleanValue(value) {
   return [...String(value ?? '')].filter((char) => !isControl(char.codePointAt(0))).join('').trim();
 }
 
-// Returns { contact } or { problems: [{ field, code }] }.
-export function validateRow(values, columns) {
+// Returns { contact } or { problems: [{ field, code }] }. Date variables
+// (`types`, ADR-030) must be real dates in DD/MM/AAAA; stored as AAAA-MM-DD.
+export function validateRow(values, columns, types = {}) {
   if (values.length !== columns.length) return { problems: [{ field: '*', code: 'column_count' }] };
   const problems = [];
   const contact = { email: '', first_name: null, last_name: null, attributes: {} };
@@ -49,6 +52,10 @@ export function validateRow(values, columns) {
       problems.push({ field: column, code: 'too_long' });
     } else if (column === 'first_name' || column === 'last_name') {
       contact[column] = value || null;
+    } else if (value !== '' && isDateVariable(types, column)) {
+      const date = parseDate(value);
+      if (date) contact.attributes[column] = date;
+      else problems.push({ field: column, code: 'invalid_date' });
     } else if (value !== '') {
       contact.attributes[column] = value;
     }

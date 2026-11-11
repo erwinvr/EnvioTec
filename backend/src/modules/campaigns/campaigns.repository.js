@@ -9,7 +9,8 @@ const CAMPAIGN = `c.id, c.area_id, a.name AS area_name, c.name, c.status, c.subj
   at.status AS attachment_status, at.failure_reason AS attachment_failure, c.created_by, cu.username AS created_by_username,
   c.submitted_by, su.username AS submitted_by_username, c.submitted_at, c.approved_by, au.username AS approved_by_username,
   c.approved_at, c.rejection_reason, c.cancel_reason, c.cancelled_at, c.started_at, c.finished_at, c.recipient_count,
-  c.reserved, c.created_at, c.updated_at`;
+  c.reserved, c.created_at, c.updated_at, c.schedule_variable, c.schedule_offset_days, c.schedule_time,
+  c.excluded_no_date, c.excluded_past, c.excluded_too_far`;
 const FROM = `FROM campaigns c
   JOIN areas a ON a.id = c.area_id
   JOIN template_versions tv ON tv.id = c.template_version_id
@@ -56,7 +57,7 @@ export function createCampaignsRepository() {
         `SELECT
            (SELECT row_to_json(v) FROM (SELECT tv.id, tv.status, tv.variables, t.is_archived FROM template_versions tv
               JOIN templates t ON t.id = tv.template_id WHERE tv.id = $2 AND t.area_id = $1) v) AS version,
-           (SELECT row_to_json(x) FROM (SELECT id, attributes FROM contact_lists WHERE id = $3 AND area_id = $1) x) AS list,
+           (SELECT row_to_json(x) FROM (SELECT id, attributes, attribute_types FROM contact_lists WHERE id = $3 AND area_id = $1) x) AS list,
            (SELECT row_to_json(y) FROM (SELECT id, is_active FROM sender_identities WHERE id = $4 AND area_id = $1) y) AS sender,
            (SELECT count(*)::int FROM contacts WHERE list_id = $3 AND anonymized_at IS NULL) AS recipients`,
         [areaId, templateVersionId, listId, senderId],
@@ -82,9 +83,11 @@ export function createCampaignsRepository() {
 
     async create(db, input) {
       const { rows } = await db.query(
-        `INSERT INTO campaigns (area_id, name, subject, template_version_id, list_id, sender_id, scheduled_at, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
-        [input.areaId, input.name, input.subject, input.templateVersionId, input.listId, input.senderId, input.scheduledAt ?? null, input.actorId],
+        `INSERT INTO campaigns (area_id, name, subject, template_version_id, list_id, sender_id, scheduled_at, created_by, updated_by,
+                                schedule_variable, schedule_offset_days, schedule_time)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11) RETURNING id`,
+        [input.areaId, input.name, input.subject, input.templateVersionId, input.listId, input.senderId, input.scheduledAt ?? null, input.actorId,
+          input.scheduleByDate?.variable ?? null, input.scheduleByDate?.offsetDays ?? null, input.scheduleByDate?.time ?? null],
       );
       return rows[0].id;
     },
@@ -92,15 +95,17 @@ export function createCampaignsRepository() {
     async update(db, id, fields, actorId) {
       await db.query(
         `UPDATE campaigns SET name = $2, subject = $3, template_version_id = $4, list_id = $5, sender_id = $6, scheduled_at = $7,
-                updated_by = $8
+                updated_by = $8, schedule_variable = $9, schedule_offset_days = $10, schedule_time = $11
           WHERE id = $1`,
-        [id, fields.name, fields.subject, fields.templateVersionId, fields.listId, fields.senderId, fields.scheduledAt ?? null, actorId],
+        [id, fields.name, fields.subject, fields.templateVersionId, fields.listId, fields.senderId, fields.scheduledAt ?? null, actorId,
+          fields.scheduleByDate?.variable ?? null, fields.scheduleByDate?.offsetDays ?? null, fields.scheduleByDate?.time ?? null],
       );
     },
 
     async setStatus(db, id, status, extra = {}) {
       const allowed = ['submitted_by', 'submitted_at', 'approved_by', 'approved_at', 'rejection_reason', 'cancel_reason',
-        'cancelled_at', 'cancelled_by', 'recipient_count', 'reserved', 'started_at', 'finished_at'];
+        'cancelled_at', 'cancelled_by', 'recipient_count', 'reserved', 'started_at', 'finished_at', 'scheduled_at',
+        'excluded_no_date', 'excluded_past', 'excluded_too_far'];
       const entries = Object.entries(extra).filter(([key]) => allowed.includes(key));
       const sets = entries.map(([key], index) => `${key} = $${index + 3}`);
       await db.query(
@@ -114,7 +119,8 @@ export function createCampaignsRepository() {
       await db.query('DELETE FROM campaign_recipients WHERE campaign_id = $1', [id]);
       await db.query(
         `UPDATE campaigns SET status = 'draft', submitted_by = NULL, submitted_at = NULL, approved_by = NULL, approved_at = NULL,
-                recipient_count = NULL, reserved = 0
+                recipient_count = NULL, reserved = 0, excluded_no_date = NULL, excluded_past = NULL, excluded_too_far = NULL,
+                scheduled_at = CASE WHEN schedule_variable IS NOT NULL THEN NULL ELSE scheduled_at END
           WHERE id = $1`,
         [id],
       );
@@ -136,11 +142,40 @@ export function createCampaignsRepository() {
       return rowCount;
     },
 
+    // Snapshot for sending by each contact's date (ADR-030): send_at is the
+    // contact's date plus the offset, at the chosen time in America/La_Paz.
+    // Left out: no date, moment already past, beyond the window. Returns the
+    // counts and the first send_at.
+    async snapshotRecipientsByDate(db, campaignId, listId, { variable, offsetDays, time }, windowDays) {
+      const params = [campaignId, listId, variable, offsetDays, time, windowDays];
+      const { rows } = await db.query(
+        `WITH eligible AS (
+           SELECT c.id, c.email, c.first_name, c.last_name, c.attributes,
+                  CASE WHEN c.attributes ->> $3 ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                       THEN ((((c.attributes ->> $3)::date + $4::int) + $5::time) AT TIME ZONE 'America/La_Paz') END AS send_at
+             FROM contacts c
+            WHERE c.list_id = $2 AND c.anonymized_at IS NULL AND NOT ${SUPPRESSED.replace('%s', 'c.email')}
+         ), inserted AS (
+           INSERT INTO campaign_recipients (campaign_id, contact_id, email, first_name, last_name, attributes, send_at)
+           SELECT $1, id, email, first_name, last_name, attributes, send_at FROM eligible
+            WHERE send_at >= now() AND send_at <= now() + make_interval(days => $6)
+           RETURNING send_at
+         )
+         SELECT (SELECT count(*)::int FROM inserted) AS count,
+                (SELECT min(send_at) FROM inserted) AS first_send_at,
+                (SELECT count(*)::int FROM eligible WHERE send_at IS NULL) AS no_date,
+                (SELECT count(*)::int FROM eligible WHERE send_at < now()) AS past,
+                (SELECT count(*)::int FROM eligible WHERE send_at > now() + make_interval(days => $6)) AS too_far`,
+        params,
+      );
+      return rows[0];
+    },
+
     async recipients(db, campaignId, { limit, offset }) {
       const { rows: count } = await db.query('SELECT count(*)::int AS total FROM campaign_recipients WHERE campaign_id = $1', [campaignId]);
       const { rows } = await db.query(
-        `SELECT id, email, first_name, last_name, status, sent_at, error FROM campaign_recipients
-          WHERE campaign_id = $1 ORDER BY email LIMIT $2 OFFSET $3`,
+        `SELECT id, email, first_name, last_name, status, sent_at, error, send_at FROM campaign_recipients
+          WHERE campaign_id = $1 ORDER BY send_at NULLS FIRST, email LIMIT $2 OFFSET $3`,
         [campaignId, limit, offset],
       );
       return { rows, total: count[0].total };

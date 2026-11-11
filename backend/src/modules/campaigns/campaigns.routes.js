@@ -16,6 +16,8 @@ const ref = (extra = {}) => object({ id: { type: 'string' }, name: { type: 'stri
 const campaign = object({
   id: { type: 'string' }, areaId: { type: 'string' }, areaName: { type: 'string' }, name: { type: 'string' }, status: { type: 'string' },
   subject: { type: 'string' }, scheduledAt: nullable,
+  scheduleByDate: { anyOf: [{ type: 'null' }, object({ variable: { type: 'string' }, offsetDays: int, time: { type: 'string' } }, ['variable', 'offsetDays', 'time'])] },
+  excluded: { anyOf: [{ type: 'null' }, object({ noDate: int, past: int, tooFar: int }, ['noDate', 'past', 'tooFar'])] },
   template: ref({ version: int, versionId: { type: 'string' } }), list: ref(),
   sender: object({ id: { type: 'string' }, email: { type: 'string' }, name: { type: 'string' } }, ['id', 'email', 'name']),
   attachment: { anyOf: [{ type: 'null' }, object({ id: { type: 'string' }, name: { type: 'string' }, status: { type: 'string' }, failureReason: nullable }, ['id', 'name', 'status', 'failureReason'])] },
@@ -29,7 +31,16 @@ const idParams = object({ id: uuid }, ['id']);
 const name = { type: 'string', minLength: 2, maxLength: 150, pattern: '\\S' };
 const subject = { type: 'string', minLength: 1, maxLength: 200 };
 const reason = { type: 'string', minLength: 5, maxLength: 500, pattern: '\\S' };
-const editable = { name, subject, templateId: uuid, templateVersionId: uuid, listId: uuid, senderId: uuid, scheduledAt: { type: ['string', 'null'], format: 'date-time' } };
+// Sending by each contact's date (ADR-030): date variable, offset in days, time (HH:MM, America/La_Paz).
+const scheduleByDate = {
+  anyOf: [{ type: 'null' }, object({
+    variable: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,39}$' }, offsetDays: { type: 'integer', minimum: -365, maximum: 365 },
+    time: { type: 'string', pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' },
+  }, ['variable'])],
+};
+const editable = {
+  name, subject, templateId: uuid, templateVersionId: uuid, listId: uuid, senderId: uuid, scheduledAt: { type: ['string', 'null'], format: 'date-time' }, scheduleByDate,
+};
 
 export async function campaignsRoutes(app, { db, audit, store, fileQueue, sendQueue }) {
   const repository = createCampaignsRepository();
@@ -74,7 +85,7 @@ export async function campaignsRoutes(app, { db, audit, store, fileQueue, sendQu
     response: {
       200: successSchema({
         type: 'array',
-        items: object({ id: { type: 'string' }, email: { type: 'string' }, firstName: nullable, lastName: nullable, status: { type: 'string' }, sentAt: nullable, error: nullable },
+        items: object({ id: { type: 'string' }, email: { type: 'string' }, firstName: nullable, lastName: nullable, status: { type: 'string' }, sentAt: nullable, error: nullable, sendAt: nullable },
           ['id', 'email', 'firstName', 'lastName', 'status', 'sentAt', 'error']),
       }, pageMeta),
     },

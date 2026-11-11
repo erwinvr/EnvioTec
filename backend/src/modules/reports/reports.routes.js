@@ -14,10 +14,11 @@ const STATS = ['recipients', 'accepted', 'rejected', 'suppressed', 'pending', 'n
 const stats = object(Object.fromEntries(STATS.map((key) => [key, int])), STATS);
 const campaign = object({
   id: str, name: str, subject: str, status: str, areaId: str, areaName: str, startedAt: nullable, finishedAt: nullable, stats,
+  byDay: { anyOf: [{ type: 'null' }, { type: 'array', items: object({ day: nullable, ...stats.properties }, ['day', ...STATS]) }] },
 }, ['id', 'name', 'status', 'areaId', 'areaName', 'stats']);
 const recipientProps = {
   id: str, email: str, status: str, sentAt: nullable, error: nullable, delivered: bool, opens: int, clicks: int,
-  hardBounce: bool, softBounce: bool, complaint: bool, unsubscribed: bool, lastEventAt: nullable,
+  hardBounce: bool, softBounce: bool, complaint: bool, unsubscribed: bool, lastEventAt: nullable, sendAt: nullable,
 };
 const recipient = object(recipientProps, ['id', 'email', 'status', 'delivered', 'opens', 'clicks']);
 const contactRow = object({ ...recipientProps, campaignId: str, campaignName: str, areaName: str, startedAt: nullable }, ['id', 'email', 'status', 'campaignId', 'campaignName']);

@@ -68,7 +68,7 @@ export async function processContactsCsv(data, deps) {
   return outcome;
 }
 
-async function inspect({ fileId, mapping, attributes }, { store, clamav }) {
+async function inspect({ fileId, mapping, attributes, types = {} }, { store, clamav }) {
   const scan = await clamav.scan(store.read('incoming', fileId));
   if (!scan.clean) return { status: 'failed', reason: 'malware', signature: scan.signature };
 
@@ -101,7 +101,7 @@ async function inspect({ fileId, mapping, attributes }, { store, clamav }) {
       rowNumber += 1;
       totalRows += 1;
       if (totalRows > LIMITS.maxRows) return { status: 'failed', reason: 'too_many_rows' };
-      const result = validateRow(record, columns);
+      const result = validateRow(record, columns, types);
       if (result.problems) {
         for (const problem of result.problems) reject(rowNumber, problem.field, problem.code);
         continue;

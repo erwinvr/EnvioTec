@@ -77,10 +77,10 @@ export function createImportsService({ db, repository, audit, store, fileQueue }
         if (checked.error) throw new ValidationError([{ field: 'mapping', code: MAPPING_ERRORS[checked.error] }]);
         await repository.startMapping(client, id, mapping);
         await record(client, auth, context, 'contacts.import_mapping', id, { listId: row.list_id, mapping });
-        return { fileId: row.file_id, attributes: list.attributes };
+        return { fileId: row.file_id, attributes: list.attributes, types: list.attribute_types };
       });
       try {
-        await fileQueue.add('contacts_csv', { kind: 'contacts_csv', fileId: outcome.fileId, importId: id, mapping, attributes: outcome.attributes },
+        await fileQueue.add('contacts_csv', { kind: 'contacts_csv', fileId: outcome.fileId, importId: id, mapping, attributes: outcome.attributes, types: outcome.types },
           { jobId: `import-${outcome.fileId}` });
       } catch (error) {
         await repository.finishImport(db, id, { status: 'failed', failureReason: 'queue_unavailable' });

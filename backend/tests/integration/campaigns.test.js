@@ -25,15 +25,15 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
   const op = (...args) => as(operatorToken)(...args);
   const ap = (...args) => as(approverToken)(...args);
 
-  async function fixtures(areaId, { variables = ['first_name'], attributes = [] } = {}) {
+  async function fixtures(areaId, { variables = ['first_name'], attributes = [], types = {} } = {}) {
     const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2) RETURNING id', [areaId, `${h.prefix}-t-${Math.random()}`]);
     await h.owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
        VALUES ($1, 1, 'ready', gen_random_uuid(), 'p.docx', 10, repeat('a', 64), '<p>Hola {{first_name}}</p>', 'Hola', $2, $3)`,
       [template[0].id, variables, operator.id],
     );
-    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name, attributes) VALUES ($1, $2, $3) RETURNING id',
-      [areaId, `${h.prefix}-l-${Math.random()}`, attributes]);
+    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name, attributes, attribute_types) VALUES ($1, $2, $3, $4) RETURNING id',
+      [areaId, `${h.prefix}-l-${Math.random()}`, attributes, types]);
     for (const email of ['uno@destino.test', 'dos@destino.test', `${h.prefix}.suprimido@destino.test`]) {
       await h.owner.query('INSERT INTO contacts (area_id, list_id, email, first_name) VALUES ($1, $2, $3, $4)', [areaId, list[0].id, email, 'X']);
     }
@@ -168,6 +168,40 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
     } finally {
       await h.owner.query('UPDATE templates SET is_archived = false WHERE id = $1', [refs.templateId]);
     }
+  });
+
+  it('envío según fecha del contacto: foto con hora por destinatario y excluidos informados (ADR-030)', async () => {
+    const own = await fixtures(h.areaId, { attributes: ['vence'], types: { vence: 'date' } });
+    const laPaz = (days) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date(Date.now() + days * 86400000));
+    const setDate = (email, date) => h.owner.query("UPDATE contacts SET attributes = jsonb_build_object('vence', $2::text) WHERE list_id = $1 AND email = $3", [own.listId, date, email]);
+    await setDate('uno@destino.test', laPaz(1));
+    for (const [email, date] of [['pasado@destino.test', laPaz(-2)], ['lejos@destino.test', laPaz(400)]]) {
+      await h.owner.query("INSERT INTO contacts (area_id, list_id, email, attributes) VALUES ($1, $2, $3, jsonb_build_object('vence', $4::text))", [h.areaId, own.listId, email, date]);
+    }
+    const bad = await op('POST', '/api/v1/campaigns', { name: 'Mala', subject: 'S', ...own, scheduleByDate: { variable: 'nope' } });
+    assert.equal(bad.json().error.details[0].code, 'invalid_schedule_variable');
+    const both = await op('POST', '/api/v1/campaigns', {
+      name: 'Doble', subject: 'S', ...own, scheduleByDate: { variable: 'vence' }, scheduledAt: new Date(Date.now() + 86400000).toISOString(),
+    });
+    assert.equal(both.json().error.details[0].code, 'schedule_conflict');
+
+    const id = await readyCampaign({ ...own, scheduleByDate: { variable: 'vence', offsetDays: 0, time: '09:00' } });
+    assert.deepEqual((await op('GET', `/api/v1/campaigns/${id}`)).json().data.scheduleByDate, { variable: 'vence', offsetDays: 0, time: '09:00' });
+    const before = await quota(operator.id);
+    assert.equal((await op('POST', `/api/v1/campaigns/${id}/submit`)).statusCode, 200);
+    const approved = await ap('POST', `/api/v1/campaigns/${id}/approve`);
+    assert.equal(approved.statusCode, 200, approved.body);
+    const data = approved.json().data;
+    assert.deepEqual([data.status, data.recipientCount, data.excluded], ['scheduled', 1, { noDate: 1, past: 1, tooFar: 1 }]);
+    assert.equal(data.scheduledAt, new Date(`${laPaz(1)}T09:00:00-04:00`).toISOString(), 'primer envío: mañana 09:00 de Bolivia');
+    assert.equal((await quota(operator.id)).reserved - before.reserved, 1, 'solo se reserva lo que entra en la ventana');
+    // The operator has no contacts.view: the email comes masked; the scheduled moment is what matters.
+    const recipients = (await op('GET', `/api/v1/campaigns/${id}/recipients`)).json().data;
+    assert.deepEqual(recipients.map((r) => r.sendAt), [data.scheduledAt]);
+    // Cancelling a by-date campaign releases what it reserved.
+    const cancelled = await op('POST', `/api/v1/campaigns/${id}/cancel`, { reason: 'Prueba de envío por fecha' });
+    assert.equal(cancelled.json().data.status, 'cancelled');
+    assert.equal((await quota(operator.id)).reserved, before.reserved);
   });
 
   it('la base de datos también impide que la misma persona envíe y apruebe', async () => {

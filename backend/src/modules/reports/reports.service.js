@@ -30,7 +30,7 @@ export function createReportsService({ db, repository, audit }) {
   const toRecipient = (show) => (row) => ({
     id: row.id, email: show(row.email), status: row.status, sentAt: iso(row.sent_at), error: row.error, delivered: row.delivered,
     opens: row.opens, clicks: row.clicks, hardBounce: row.hard_bounce, softBounce: row.soft_bounce, complaint: row.complaint,
-    unsubscribed: row.unsubscribed, lastEventAt: iso(row.last_event_at),
+    unsubscribed: row.unsubscribed, lastEventAt: iso(row.last_event_at), sendAt: iso(row.send_at),
   });
   const record = (auth, context, action, resourceType, id, metadata) => audit.record(db, {
     actor: actorFrom(auth), action, resourceType, resourceId: id, result: 'success', context, metadata,
@@ -49,7 +49,10 @@ export function createReportsService({ db, repository, audit }) {
     },
 
     async campaign(auth, id) {
-      return toCampaign(await campaignInScope(auth, id));
+      const row = await campaignInScope(auth, id);
+      // Sending by each contact's date (ADR-030): also per scheduled day.
+      const byDay = row.schedule_variable ? (await repository.byDay(db, id)).map((day) => ({ day: day.day, ...summary(day) })) : null;
+      return { ...toCampaign(row), byDay };
     },
 
     async recipients(auth, id, { status, event, page, pageSize }) {

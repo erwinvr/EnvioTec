@@ -9,7 +9,7 @@ const escapeLike = (text) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 // (fragments written here, values as parameters) applies to both the
 // recipients and the events subquery, so the latter stays narrow.
 const facts = (recipientWhere, eventWhere) => `
-  SELECT r.id, r.campaign_id, r.email::text AS email, r.status, r.sent_at, r.error,
+  SELECT r.id, r.campaign_id, r.email::text AS email, r.status, r.sent_at, r.error, r.send_at,
          coalesce(e.sent AND NOT e.hard_bounce AND NOT e.rejected, false) AS delivered,
          coalesce(e.opens, 0) AS opens, coalesce(e.clicks, 0) AS clicks,
          coalesce(e.hard_bounce, false) AS hard_bounce, coalesce(e.soft_bounce, false) AS soft_bounce,
@@ -45,7 +45,7 @@ const SUMMARY = `
   count(*) FILTER (WHERE f.complaint)::int AS complaints,
   count(*) FILTER (WHERE f.unsubscribed)::int AS unsubscribes`;
 
-const CAMPAIGN = `c.id, c.name, c.subject, c.status, c.area_id, a.name AS area_name, c.started_at, c.finished_at`;
+const CAMPAIGN = `c.id, c.name, c.subject, c.status, c.area_id, a.name AS area_name, c.started_at, c.finished_at, c.schedule_variable`;
 
 // Allowlists for the recipient filters (A8): values map to fixed SQL.
 export const STATUS_FILTERS = {
@@ -110,6 +110,18 @@ export function createReportsRepository() {
       const { rows: count } = await db.query(`SELECT count(*)::int AS total ${base}`, [campaignId]);
       const { rows } = await db.query(`SELECT f.* ${base} ORDER BY f.email LIMIT $2 OFFSET $3`, [campaignId, limit, offset]);
       return { rows, total: count[0].total };
+    },
+
+    // Sending by each contact's date (ADR-030): figures per scheduled day
+    // (America/La_Paz), for a campaign already checked to be in scope.
+    async byDay(db, campaignId) {
+      const { rows } = await db.query(
+        `SELECT to_char((f.send_at AT TIME ZONE 'America/La_Paz')::date, 'YYYY-MM-DD') AS day, ${SUMMARY}
+           FROM (${facts('r.campaign_id = $1', 'campaign_id = $1')}) f
+          GROUP BY 1 ORDER BY 1 NULLS FIRST LIMIT 400`,
+        [campaignId],
+      );
+      return rows;
     },
 
     // Events of one recipient of a campaign already checked to be in scope,

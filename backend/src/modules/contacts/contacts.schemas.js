@@ -19,14 +19,14 @@ export const createListBody = object({
   name: { type: 'string', minLength: 2, maxLength: 100, pattern: '\\S' },
   description: { type: 'string', maxLength: 500 },
   attributes: { type: 'array', maxItems: 30, uniqueItems: true, items: attributeName },
-  variables: { type: 'array', maxItems: 30, items: object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']) },
+  variables: { type: 'array', maxItems: 30, items: object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 }, type: { type: 'string', enum: ['text', 'date'] } }, ['label']) },
 }, ['name']);
 export const updateListBody = object({
   name: createListBody.properties.name, description: createListBody.properties.description,
 }, [], { minProperties: 1 });
 // Variables of a list (ADR-028).
 export const variableParams = object({ id: uuid, name: attributeName }, ['id', 'name']);
-export const variableBody = object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']);
+export const variableBody = object({ name: attributeName, label: { type: 'string', minLength: 1, maxLength: 60 }, type: { type: 'string', enum: ['text', 'date'] } }, ['label']);
 export const variableLabelBody = object({ label: { type: 'string', minLength: 1, maxLength: 60 } }, ['label']);
 // One target per CSV column: a fixed field, a variable, or null (skip).
 export const mappingBody = object({
@@ -44,7 +44,7 @@ export const updateContactBody = object(createContactBody.properties, [], { minP
 const list = object({
   id: { type: 'string' }, areaId: { type: 'string' }, areaName: { type: 'string' }, name: { type: 'string' },
   description: { type: 'string' }, attributes: { type: 'array', items: { type: 'string' } }, contactCount: int,
-  variables: { type: 'array', items: object({ name: { type: 'string' }, label: { type: 'string' } }, ['name', 'label']) },
+  variables: { type: 'array', items: object({ name: { type: 'string' }, label: { type: 'string' }, type: { type: 'string' } }, ['name', 'label', 'type']) },
 }, ['id', 'areaId', 'areaName', 'name', 'description', 'attributes', 'contactCount', 'variables']);
 const contact = object({
   id: { type: 'string' }, listId: { type: 'string' }, email: { type: 'string' }, firstName: nullable, lastName: nullable,

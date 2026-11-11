@@ -3,7 +3,7 @@ import { areaCondition } from '../../core/authorization/area-scope.js';
 // SQL of lists, contacts and imports. Every read and every target of a
 // change goes through the area scope (ADR-008).
 
-const LIST_COLUMNS = `l.id, l.area_id, a.name AS area_name, l.name, l.description, l.attributes, l.attribute_labels, l.created_at, l.updated_at,
+const LIST_COLUMNS = `l.id, l.area_id, a.name AS area_name, l.name, l.description, l.attributes, l.attribute_labels, l.attribute_types, l.created_at, l.updated_at,
   (SELECT count(*)::int FROM contacts c WHERE c.list_id = l.id) AS contact_count`;
 const CONTACT_COLUMNS = 'c.id, c.list_id, c.email, c.first_name, c.last_name, c.attributes, c.anonymized_at, c.created_at, c.updated_at';
 const IMPORT_COLUMNS = `i.id, i.list_id, i.original_name, i.size_bytes, i.sha256, i.status, i.total_rows, i.inserted, i.updated,
@@ -42,9 +42,10 @@ export function createContactsRepository() {
     // `variables`: [{ name, label }] in order (ADR-028).
     async createList(db, { areaId, name, description, variables, actorId }) {
       const { rows } = await db.query(
-        `INSERT INTO contact_lists (area_id, name, description, attributes, attribute_labels, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id`,
-        [areaId, name, description ?? '', variables.map((v) => v.name), Object.fromEntries(variables.map((v) => [v.name, v.label])), actorId],
+        `INSERT INTO contact_lists (area_id, name, description, attributes, attribute_labels, attribute_types, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING id`,
+        [areaId, name, description ?? '', variables.map((v) => v.name), Object.fromEntries(variables.map((v) => [v.name, v.label])),
+          Object.fromEntries(variables.map((v) => [v.name, v.type ?? 'text'])), actorId],
       );
       return rows[0].id;
     },
@@ -60,12 +61,12 @@ export function createContactsRepository() {
       );
     },
 
-    async addVariable(db, id, { name, label }, actorId) {
+    async addVariable(db, id, { name, label, type }, actorId) {
       await db.query(
         `UPDATE contact_lists SET attributes = array_append(attributes, $2), attribute_labels = attribute_labels || jsonb_build_object($2::text, $3::text),
-                updated_by = $4
+                attribute_types = attribute_types || jsonb_build_object($2::text, $5::text), updated_by = $4
           WHERE id = $1`,
-        [id, name, label, actorId],
+        [id, name, label, actorId, type ?? 'text'],
       );
     },
 
@@ -78,7 +79,9 @@ export function createContactsRepository() {
 
     async removeVariable(db, id, name, actorId) {
       await db.query(
-        'UPDATE contact_lists SET attributes = array_remove(attributes, $2), attribute_labels = attribute_labels - $2::text, updated_by = $3 WHERE id = $1',
+        `UPDATE contact_lists SET attributes = array_remove(attributes, $2), attribute_labels = attribute_labels - $2::text,
+                attribute_types = attribute_types - $2::text, updated_by = $3
+          WHERE id = $1`,
         [id, name, actorId],
       );
     },
@@ -114,7 +117,7 @@ export function createContactsRepository() {
     async contactInScope(db, scope, id, { forUpdate = false } = {}) {
       const params = [id];
       const { rows } = await db.query(
-        `SELECT ${CONTACT_COLUMNS}, l.attributes AS list_attributes FROM contacts c JOIN contact_lists l ON l.id = c.list_id
+        `SELECT ${CONTACT_COLUMNS}, l.attributes AS list_attributes, l.attribute_types AS list_types FROM contacts c JOIN contact_lists l ON l.id = c.list_id
           WHERE c.id = $1 AND ${areaCondition(scope, 'c.area_id', params)} ${forUpdate ? 'FOR UPDATE OF c' : ''}`,
         params,
       );

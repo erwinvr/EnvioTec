@@ -11,7 +11,7 @@ import { badge, button, pageHeader, section } from '../../components/page.js';
 import { toast } from '../../components/toast.js';
 import { saveResponse } from '../download.js';
 import { openMapping } from './import-mapping.js';
-import { variablesSection, variableTag } from './list-variables.js';
+import { isDate, showDate, variablesSection, variableTag } from './list-variables.js';
 
 const POLL_MS = 2000;
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -34,7 +34,7 @@ export async function render(container, { params }) {
       { key: 'email', label: t('users.email'), render: (c) => el('span', {}, [c.email, c.suppressed ? badge(t('contacts.suppressed'), 'warning') : null]) },
       { key: 'firstName', label: t('contacts.firstName') },
       { key: 'lastName', label: t('contacts.lastName') },
-      ...list.variables.map((v) => ({ key: `attr_${v.name}`, label: v.label, render: (c) => c.attributes[v.name] ?? '' })),
+      ...list.variables.map((v) => ({ key: `attr_${v.name}`, label: v.label, render: (c) => (isDate(v) ? showDate(c.attributes[v.name]) : c.attributes[v.name]) ?? '' })),
       {
         key: 'actions', label: '', render: (c) => (c.anonymized ? badge(t('contacts.anonymized')) : el('span', { className: 'actions' }, [
           can('contacts.update') ? button(t('common.edit'), () => editContact(c)) : null,
@@ -80,7 +80,11 @@ export async function render(container, { params }) {
         { name: 'email', label: t('contacts.email'), type: 'email', required: true, maxLength: 254, value: contact?.email, hint: variableTag('email') },
         { name: 'firstName', label: t('contacts.firstName'), maxLength: 100, value: contact?.firstName ?? '', hint: variableTag('first_name') },
         { name: 'lastName', label: t('contacts.lastName'), maxLength: 100, value: contact?.lastName ?? '', hint: variableTag('last_name') },
-        ...list.variables.map((v) => ({ name: `attr_${v.name}`, label: v.label, maxLength: 500, value: contact?.attributes[v.name] ?? '', hint: variableTag(v.name) })),
+        ...list.variables.map((v) => ({
+          name: `attr_${v.name}`, label: v.label, maxLength: 500, value: contact?.attributes[v.name] ?? '', hint: variableTag(v.name),
+          // Date variables use the browser's date picker (AAAA-MM-DD), accepted by the API (ADR-030).
+          ...(isDate(v) ? { type: 'date' } : {}),
+        })),
       ],
       submitLabel: t('common.save'),
       onSubmit: async (values) => {

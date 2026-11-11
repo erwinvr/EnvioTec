@@ -14,6 +14,10 @@ import { toast } from '../../components/toast.js';
 
 export const variableTag = (name) => `{{${name}}}`;
 
+// Date variables (ADR-030): stored as AAAA-MM-DD, shown as DD/MM/AAAA.
+export const isDate = (variable) => variable.type === 'date';
+export const showDate = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(value ?? '') ? value.split('-').reverse().join('/') : value);
+
 export const fixedFields = () => [
   { name: 'email', label: t('contacts.email') },
   { name: 'first_name', label: t('contacts.firstName') },
@@ -28,12 +32,16 @@ export function variablesSection(list, { canEdit, onChange }) {
         : [
           { name: 'label', label: t('variables.label'), required: true, maxLength: 60, hint: t('variables.labelHint') },
           { name: 'name', label: t('variables.name'), maxLength: 40, pattern: '[a-z][a-z0-9_]{0,39}', hint: t('variables.nameHint') },
+          {
+            name: 'type', label: t('variables.type'), type: 'select', value: 'text', hint: t('variables.typeHint'),
+            options: [{ value: 'text', label: t('variables.types.text') }, { value: 'date', label: t('variables.types.date') }],
+          },
         ],
       submitLabel: t('common.save'),
       onSubmit: async (values) => {
         const call = variable
           ? () => api.patch(`/api/v1/lists/${list.id}/variables/${encodeURIComponent(variable.name)}`, { label: values.label })
-          : () => api.post(`/api/v1/lists/${list.id}/variables`, values.name ? values : { label: values.label });
+          : () => api.post(`/api/v1/lists/${list.id}/variables`, { label: values.label, type: values.type, ...(values.name ? { name: values.name } : {}) });
         if (await run(call, { form })) {
           modal.close();
           toast(t('common.saved'), 'success');
@@ -50,7 +58,7 @@ export function variablesSection(list, { canEdit, onChange }) {
   }
 
   const row = (variable, fixed) => el('tr', {}, [
-    el('td', { text: variable.label }),
+    el('td', {}, [variable.label, variable.type === 'date' ? badge(t('variables.types.date')) : null]),
     el('td', {}, [el('code', { text: variableTag(variable.name) })]),
     el('td', {}, [fixed ? badge(t('variables.fixed')) : (canEdit ? el('span', { className: 'actions' }, [
       button(t('common.edit'), () => openForm(variable)),

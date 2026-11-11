@@ -41,7 +41,7 @@ export function createSender({ pool, repository, quotas, mandrill, store, audit,
     const images = [];
     for (const image of row.images) images.push({ cid: image.cid, contentType: image.contentType, base64: await readBase64(image.fileId) });
     return {
-      content: { html: row.html, text: row.text_body, variables: row.variables, images },
+      content: { html: row.html, text: row.text_body, variables: row.variables, types: row.types ?? {}, images },
       sender: { email: row.sender_email, display_name: row.display_name, reply_to: row.reply_to },
       attachment: row.attachment_file ? { name: row.attachment_name, base64: await readBase64(row.attachment_file) } : null,
     };
@@ -81,6 +81,11 @@ export function createSender({ pool, repository, quotas, mandrill, store, audit,
         });
       }
       for (const id of await repository.sendingCampaigns(pool)) {
+        // Recipients whose date arrived since the last run (ADR-030).
+        await withTransaction(pool, async (client) => {
+          const campaign = await repository.lockCampaign(client, id);
+          if (campaign?.status === 'sending') await repository.createBatches(client, id, batchSize);
+        });
         for (const batchId of await repository.batchesToQueue(pool, id)) {
           await sendQueue.add('batch', { kind: 'batch', batchId });
           summary.queued += 1;

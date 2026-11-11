@@ -1,3 +1,5 @@
+import { formatDate, isDateVariable } from '../contacts/dates.js';
+
 // Builds the Mandrill message of a batch (ADR-005, ADR-013, ADR-024).
 //
 // Variables are escaped exactly once, by EnvioTec: the stored template uses
@@ -24,8 +26,10 @@ export function toMergeText(text) {
   return text.replace(VARIABLE, (_, name) => `{{{${name}__text}}}`);
 }
 
-export function recipientValues(recipient, variables) {
+// Date variables (ADR-030) are stored as AAAA-MM-DD and merged as DD/MM/AAAA.
+export function recipientValues(recipient, variables, types = {}) {
   const values = { email: recipient.email, first_name: recipient.first_name, last_name: recipient.last_name, ...recipient.attributes };
+  for (const name of variables) if (isDateVariable(types, name) && values[name]) values[name] = formatDate(values[name]);
   return variables.flatMap((name) => [
     { name, content: escapeHtml(plain(values[name] ?? '')) },
     { name: `${name}__text`, content: plain(values[name] ?? '') },
@@ -45,7 +49,7 @@ export function buildMessage({ campaignId, batchId, subject, content, sender, at
     preserve_recipients: false,
     merge: true,
     merge_language: 'handlebars',
-    merge_vars: recipients.map((r) => ({ rcpt: r.email, vars: recipientValues(r, content.variables) })),
+    merge_vars: recipients.map((r) => ({ rcpt: r.email, vars: recipientValues(r, content.variables, content.types) })),
     track_opens: true,
     track_clicks: true,
     auto_text: false,

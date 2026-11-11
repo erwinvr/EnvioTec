@@ -59,7 +59,9 @@ export async function render(container, { params }) {
       { name: 'event', label: t('reports.event'), type: 'select', options: EVENT_FILTERS.map((v) => ({ value: v, label: t(`reports.eventFilter.${v}`) })) },
     ],
     columns: [
-      { key: 'email', label: t('reports.email') }, ...recipientColumns(),
+      { key: 'email', label: t('reports.email') },
+      ...(c.byDay ? [{ key: 'sendAt', label: t('campaigns.sendAt'), render: (r) => formatDate(r.sendAt) }] : []),
+      ...recipientColumns(),
       { key: 'events', label: '', render: (r) => button(t('reports.details'), () => showEvents(c.id, r)) },
     ],
   });
@@ -87,6 +89,13 @@ export async function render(container, { params }) {
       [t('reports.stats.pending'), String(s.pending)],
       [t('reports.stats.notSent'), String(s.notSent)],
     ])),
+    // Sending by each contact's date (ADR-030): figures per scheduled day.
+    c.byDay ? section(t('reports.byDay'), el('table', { className: 'table' }, [
+      el('thead', {}, [el('tr', {}, ['reports.day', 'reports.stats.recipients', 'reports.stats.accepted', 'reports.stats.pending', 'reports.stats.delivered',
+        'reports.stats.opened', 'reports.stats.clicked'].map((key) => el('th', { text: t(key) })))]),
+      el('tbody', {}, c.byDay.map((d) => el('tr', {}, [d.day ? d.day.split('-').reverse().join('/') : '—', d.recipients, d.accepted, d.pending,
+        d.delivered, d.opened, d.clicked].map((value) => el('td', { text: String(value) }))))),
+    ])) : null,
     section(t('campaigns.recipients'), recipients.element),
   ]);
 }

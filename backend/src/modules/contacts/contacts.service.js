@@ -4,6 +4,7 @@ import { areaScopeFor, findForWrite } from '../../core/authorization/area-scope.
 import { withTransaction } from '../../core/db/transaction.js';
 import { AppError, NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { cleanValue, LIMITS } from './csv-rows.js';
+import { isDateVariable, parseDate } from './dates.js';
 import { newVariable } from './variables.service.js';
 
 // Contact lists and contacts (Parte B, ADR-008). Lists belong to an area and
@@ -16,15 +17,16 @@ export const toList = (row) => ({
   id: row.id, areaId: row.area_id, areaName: row.area_name, name: row.name, description: row.description,
   attributes: row.attributes, contactCount: row.contact_count,
   // ADR-028: each variable with the label people read.
-  variables: row.attributes.map((name) => ({ name, label: row.attribute_labels?.[name] ?? name })),
+  variables: row.attributes.map((name) => ({ name, label: row.attribute_labels?.[name] ?? name, type: row.attribute_types?.[name] ?? 'text' })),
 });
 export const toContact = (row) => ({
   id: row.id, listId: row.list_id, email: row.email, firstName: row.first_name, lastName: row.last_name,
   attributes: row.attributes, anonymized: row.anonymized_at !== null, suppressed: row.suppressed ?? false,
 });
 
-// Manual contact: same rules as a CSV row; attributes only those of the list.
-export function normalizeContact({ email, firstName, lastName, attributes = {} }, listAttributes) {
+// Manual contact: same rules as a CSV row; attributes only those of the
+// list; date variables as DD/MM/AAAA or AAAA-MM-DD, stored as AAAA-MM-DD.
+export function normalizeContact({ email, firstName, lastName, attributes = {} }, listAttributes, listTypes = {}) {
   const problems = [];
   const contact = {
     email: cleanValue(email).toLowerCase(),
@@ -36,7 +38,11 @@ export function normalizeContact({ email, firstName, lastName, attributes = {} }
   for (const [name, value] of Object.entries(attributes)) {
     if (!listAttributes.includes(name)) problems.push({ field: `attributes.${name}`, code: 'unknown_attribute' });
     else if (cleanValue(value).length > LIMITS.maxValue) problems.push({ field: `attributes.${name}`, code: 'too_long' });
-    else if (cleanValue(value) !== '') contact.attributes[name] = cleanValue(value);
+    else if (cleanValue(value) !== '' && isDateVariable(listTypes, name)) {
+      const date = parseDate(cleanValue(value));
+      if (date) contact.attributes[name] = date;
+      else problems.push({ field: `attributes.${name}`, code: 'invalid_date' });
+    } else if (cleanValue(value) !== '') contact.attributes[name] = cleanValue(value);
   }
   if (problems.length > 0) throw new ValidationError(problems);
   return contact;
@@ -116,7 +122,7 @@ export function createContactsService({ db, repository, audit }) {
     async createContact(auth, listId, input, context) {
       return withTransaction(db, async (client) => {
         const list = await listForWrite(client, auth, listId);
-        const contact = normalizeContact(input, list.attributes);
+        const contact = normalizeContact(input, list.attributes, list.attribute_types);
         const id = await repository.createContact(client, { areaId: list.area_id, listId, contact, actorId: auth.user.id });
         await record(client, auth, context, 'contact.create', 'contact', id, { listId });
         return toContact(await repository.contactInScope(client, { all: true }, id));
@@ -130,7 +136,7 @@ export function createContactsService({ db, repository, audit }) {
         const contact = normalizeContact({
           email: input.email ?? before.email, firstName: 'firstName' in input ? input.firstName : before.first_name,
           lastName: 'lastName' in input ? input.lastName : before.last_name, attributes: input.attributes ?? before.attributes,
-        }, before.list_attributes);
+        }, before.list_attributes, before.list_types);
         await repository.updateContact(client, id, contact);
         // Personal data stays out of the audit: only which fields changed.
         await record(client, auth, context, 'contact.update', 'contact', id, { listId: before.list_id, fields: Object.keys(input) });

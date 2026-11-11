@@ -33,3 +33,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [027](027-pdf-opcional.md) | El PDF de la campaña es opcional | Aceptado |
 | [028](028-variables-de-lista-y-asociacion-de-columnas.md) | Variables de lista y asociación de columnas del CSV | Aceptado |
 | [029](029-sincronizacion-y-conciliacion-sin-indice.md) | Sincronización y conciliación sin depender del índice; detalle de aperturas | Aceptado |
+| [030](030-variables-de-fecha-y-envio-por-fecha.md) | Variables de fecha y envío según la fecha de cada contacto | Aceptado |

@@ -23,7 +23,7 @@ export function createSendingRepository() {
 
     async lockCampaign(db, id) {
       const { rows } = await db.query(
-        `SELECT c.id, c.status, c.created_by, c.reserved, c.subject, c.template_version_id, c.sender_id, c.attachment_id, c.area_id
+        `SELECT c.id, c.status, c.created_by, c.reserved, c.subject, c.template_version_id, c.sender_id, c.attachment_id, c.area_id, c.list_id
            FROM campaigns c WHERE c.id = $1 FOR UPDATE`,
         [id],
       );
@@ -39,7 +39,10 @@ export function createSendingRepository() {
       const batches = [];
       for (;;) {
         const { rows } = await db.query(
-          "SELECT id FROM campaign_recipients WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL ORDER BY id LIMIT $2",
+          // Only those already due: sending by each contact's date (ADR-030).
+          `SELECT id FROM campaign_recipients
+            WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL AND (send_at IS NULL OR send_at <= now())
+            ORDER BY id LIMIT $2`,
           [campaignId, size],
         );
         if (rows.length === 0) return batches;
@@ -76,9 +79,11 @@ export function createSendingRepository() {
       return rows.map((row) => row.id);
     },
 
+    // Work left: open batches, or recipients still waiting for their date (ADR-030).
     async openBatches(db, campaignId) {
       const { rows } = await db.query(
-        "SELECT count(*)::int AS n FROM send_batches WHERE campaign_id = $1 AND status IN ('pending', 'in_flight', 'ambiguous')",
+        `SELECT (SELECT count(*)::int FROM send_batches WHERE campaign_id = $1 AND status IN ('pending', 'in_flight', 'ambiguous'))
+              + (SELECT count(*)::int FROM campaign_recipients WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL) AS n`,
         [campaignId],
       );
       return rows[0].n;
@@ -149,19 +154,20 @@ export function createSendingRepository() {
       const { rows } = await db.query(
         `SELECT tv.html, tv.text_body, tv.variables, tv.images,
                 s.email AS sender_email, s.display_name, s.reply_to, s.is_active AS sender_active,
-                a.file_id AS attachment_file, a.original_name AS attachment_name, a.status AS attachment_status
+                a.file_id AS attachment_file, a.original_name AS attachment_name, a.status AS attachment_status,
+                (SELECT attribute_types FROM contact_lists WHERE id = $4) AS types
            FROM template_versions tv
            JOIN sender_identities s ON s.id = $2
            LEFT JOIN campaign_attachments a ON a.id = $3
           WHERE tv.id = $1`,
-        [campaign.template_version_id, campaign.sender_id, campaign.attachment_id],
+        [campaign.template_version_id, campaign.sender_id, campaign.attachment_id, campaign.list_id],
       );
       return rows[0] ?? null;
     },
 
     async lockTestSend(db, id) {
       const { rows } = await db.query(
-        `SELECT t.id, t.status, t.email, t.campaign_id, c.subject, c.template_version_id, c.sender_id, c.attachment_id
+        `SELECT t.id, t.status, t.email, t.campaign_id, c.subject, c.template_version_id, c.sender_id, c.attachment_id, c.list_id
            FROM campaign_test_sends t JOIN campaigns c ON c.id = t.campaign_id WHERE t.id = $1 FOR UPDATE OF t`,
         [id],
       );

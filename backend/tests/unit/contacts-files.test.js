@@ -31,7 +31,9 @@ describe('reglas del CSV de contactos', () => {
   it('variables: nombre técnico desde la etiqueta, reservados y duplicados rechazados', () => {
     assert.equal(variableNameFrom('Número de póliza'), 'numero_de_poliza');
     assert.equal(variableNameFrom('2do apellido'), 'v_2do_apellido');
-    assert.deepEqual(newVariable({ label: ' Plan contratado ' }, []), { name: 'plan_contratado', label: 'Plan contratado' });
+    assert.deepEqual(newVariable({ label: ' Plan contratado ' }, []), { name: 'plan_contratado', label: 'Plan contratado', type: 'text' });
+    assert.equal(newVariable({ label: 'Vence', type: 'date' }, []).type, 'date');
+    assert.throws(() => newVariable({ label: 'x', type: 'numero' }, []), (e) => e.details[0].code === 'invalid_variable_type');
     assert.throws(() => newVariable({ label: 'Nombre' }, []), (e) => e.details[0].code === 'reserved_variable');
     assert.throws(() => newVariable({ label: 'Plan' }, ['plan']), (e) => e.statusCode === 409);
     assert.throws(() => newVariable({ label: 'x', name: 'Mal-Nombre' }, []), (e) => e.details[0].code === 'invalid_variable_name');
