@@ -100,6 +100,56 @@ export function createReportsRepository() {
       return rows[0] ?? null;
     },
 
+    // Dashboard (ADR-031): campaigns that started sending in the period
+    // (dates in America/La_Paz), within the area scope. Figures per
+    // recipient as in each campaign report; the daily series covers the
+    // period's days; devices are distinct recipients that opened per device.
+    async overview(db, scope, { from, to }) {
+      const params = [from, to];
+      const inScope = areaCondition(scope, 'c.area_id', params);
+      const start = "($1::date::timestamp AT TIME ZONE 'America/La_Paz')";
+      const end = "(($2::date + 1)::timestamp AT TIME ZONE 'America/La_Paz')";
+      const scoped = `WITH scoped AS (
+        SELECT c.id FROM campaigns c WHERE c.started_at >= ${start} AND c.started_at < ${end} AND ${inScope})`;
+      const { rows: [totals] } = await db.query(
+        `${scoped}
+         SELECT (SELECT count(*)::int FROM scoped) AS campaigns, ${SUMMARY}
+           FROM (${facts('r.campaign_id IN (SELECT id FROM scoped)', 'campaign_id IN (SELECT id FROM scoped)')}) f`,
+        params,
+      );
+      const { rows: daily } = await db.query(
+        `${scoped},
+         days AS (SELECT d::date AS day FROM generate_series($1::date, $2::date, interval '1 day') d),
+         sent AS (
+           SELECT (sent_at AT TIME ZONE 'America/La_Paz')::date AS day, count(*)::int AS sent
+             FROM campaign_recipients
+            WHERE campaign_id IN (SELECT id FROM scoped) AND sent_at >= ${start} AND sent_at < ${end}
+            GROUP BY 1),
+         events AS (
+           SELECT (occurred_at AT TIME ZONE 'America/La_Paz')::date AS day,
+                  count(DISTINCT recipient_id) FILTER (WHERE event_type = 'open')::int AS opened,
+                  count(DISTINCT recipient_id) FILTER (WHERE event_type = 'click')::int AS clicked
+             FROM message_events
+            WHERE campaign_id IN (SELECT id FROM scoped) AND event_type IN ('open', 'click')
+              AND occurred_at >= ${start} AND occurred_at < ${end}
+            GROUP BY 1)
+         SELECT to_char(d.day, 'YYYY-MM-DD') AS day, coalesce(s.sent, 0) AS sent,
+                coalesce(e.opened, 0) AS opened, coalesce(e.clicked, 0) AS clicked
+           FROM days d LEFT JOIN sent s USING (day) LEFT JOIN events e USING (day)
+          ORDER BY d.day`,
+        params,
+      );
+      const { rows: devices } = await db.query(
+        `${scoped}
+         SELECT coalesce(device, 'unknown') AS device, count(DISTINCT recipient_id)::int AS recipients
+           FROM message_events
+          WHERE campaign_id IN (SELECT id FROM scoped) AND event_type = 'open'
+          GROUP BY 1 ORDER BY 2 DESC, 1`,
+        params,
+      );
+      return { totals, daily, devices };
+    },
+
     // Recipients of a campaign already checked to be in scope.
     async recipients(db, campaignId, { status, event, limit, offset }) {
       const conditions = ['TRUE'];

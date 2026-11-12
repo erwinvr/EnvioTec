@@ -265,6 +265,11 @@ try {
   await step('reportes por campaña y búsqueda por contacto', async () => {
     await page.goto(`${BASE_URL}/#/reportes`);
     await ready(page, '#/reportes');
+    // Dashboard (ADR-031): KPI cards and the SVG chart, under the real CSP.
+    await page.waitForSelector('.kpis .kpi-value');
+    await page.waitForSelector('svg.chart path.line');
+    await page.click('.period button:text-is("Últimos 7 días")');
+    await ready(page, '#/reportes?desde=');
     await page.waitForSelector('.table-body .empty, .table-body table');
     await page.click('.page-header button:text-is("Buscar por contacto")');
     await ready(page, '#/reportes/contacto');

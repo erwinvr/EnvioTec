@@ -10,7 +10,11 @@ import { rememberReturnTo } from './pages/auth/session-flow.js';
 import { ROUTES } from './routes.js';
 
 const main = document.getElementById('app');
-const header = document.getElementById('nav');
+const layout = {
+  shell: document.getElementById('shell'),
+  sidebar: document.getElementById('nav'),
+  topbar: document.getElementById('topbar'),
+};
 let renderId = 0;
 
 function sessionView() {
@@ -27,7 +31,7 @@ async function render() {
   const id = ++renderId;
   const { path, query } = parseHash(window.location.hash);
   const outcome = resolve(ROUTES, path, sessionView());
-  renderNavigation(header, path, render);
+  renderNavigation(layout, path, render);
   main.dataset.state = 'loading';
   if (outcome.redirect) {
     if (outcome.returnTo) rememberReturnTo(outcome.returnTo);

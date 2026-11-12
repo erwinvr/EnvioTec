@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { actorFrom } from '../../core/audit/audit.service.js';
 import { areaScopeFor } from '../../core/authorization/area-scope.js';
-import { NotFoundError } from '../../core/errors/errors.js';
+import { NotFoundError, ValidationError } from '../../core/errors/errors.js';
 import { maskEmail } from '../../core/privacy/mask.js';
 import { iso } from '../../core/http/serialize.js';
 
@@ -20,6 +20,10 @@ const toCampaign = (row) => ({
   id: row.id, name: row.name, subject: row.subject, status: row.status, areaId: row.area_id, areaName: row.area_name,
   startedAt: iso(row.started_at), finishedAt: iso(row.finished_at), stats: summary(row),
 });
+
+// Longest dashboard period: one year (bounded query cost).
+export const MAX_OVERVIEW_DAYS = 366;
+const DAY_MS = 86_400_000;
 
 export const EXPORT_COLUMNS = ['email', 'status', 'sent_at', 'delivered', 'opens', 'clicks', 'hard_bounce', 'soft_bounce', 'complaint', 'unsubscribed', 'last_event_at', 'error'];
 
@@ -45,6 +49,18 @@ export function createReportsService({ db, repository, audit }) {
     async campaigns(auth, { search, from, to, page, pageSize }) {
       const { rows, total } = await repository.campaigns(db, areaScopeFor(auth), { search, from, to, limit: pageSize, offset: (page - 1) * pageSize });
       return { items: rows.map(toCampaign), total };
+    },
+
+    // Dashboard figures of the period (ADR-031), within the area scope.
+    async overview(auth, { from, to }) {
+      const days = (Date.parse(to) - Date.parse(from)) / DAY_MS + 1;
+      if (!(days >= 1 && days <= MAX_OVERVIEW_DAYS)) throw new ValidationError([{ field: 'to', code: 'invalid_period' }]);
+      const { totals, daily, devices } = await repository.overview(db, areaScopeFor(auth), { from, to });
+      return {
+        from, to, campaigns: totals.campaigns, stats: summary(totals),
+        daily: daily.map((d) => ({ day: d.day, sent: d.sent, opened: d.opened, clicked: d.clicked })),
+        devices: devices.map((d) => ({ device: d.device, recipients: d.recipients })),
+      };
     },
 
     async campaign(auth, id) {

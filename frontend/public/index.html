@@ -10,8 +10,13 @@
 </head>
 <body>
   <a class="skip-link" href="#app">Saltar al contenido / Skip to content</a>
-  <header id="nav" class="topbar"></header>
-  <main id="app" tabindex="-1" data-state="loading"></main>
+  <div id="shell" class="shell">
+    <aside id="nav" class="sidebar"></aside>
+    <div class="content">
+      <header id="topbar" class="topbar"></header>
+      <main id="app" tabindex="-1" data-state="loading"></main>
+    </div>
+  </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <noscript>EnvioTec necesita JavaScript. / EnvioTec requires JavaScript.</noscript>
 </body>

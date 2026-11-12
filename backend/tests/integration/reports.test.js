@@ -128,6 +128,36 @@ describe('reportes', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/ch
     assert.equal((await get(foreign, url)).statusCode, 404);
   });
 
+  it('resumen del período (ADR-031): cifras, serie diaria y dispositivos, solo del área', async () => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date());
+    const url = `/api/v1/reports/overview?from=${today}&to=${today}`;
+    await h.owner.query(
+      `UPDATE message_events SET device = 'mobile'
+        WHERE event_type = 'open' AND recipient_id = (SELECT id FROM campaign_recipients WHERE campaign_id = $1 AND email = $2)`,
+      [campaignId, email('ana')],
+    );
+    const res = await get(reporter, url);
+    assert.equal(res.statusCode, 200, res.body);
+    const data = res.json().data;
+    assert.equal(data.campaigns, 1);
+    assert.deepEqual([data.stats.accepted, data.stats.delivered, data.stats.opened, data.stats.clicked, data.stats.unsubscribes], [3, 2, 1, 1, 1]);
+    assert.deepEqual(data.daily, [{ day: today, sent: 3, opened: 1, clicked: 1 }]);
+    assert.deepEqual(data.devices, [{ device: 'mobile', recipients: 1 }]);
+
+    const other = (await get(foreign, url)).json().data;
+    assert.deepEqual([other.campaigns, other.stats.recipients, other.devices], [0, 0, []]);
+    assert.ok((await get(global, url)).json().data.campaigns >= 1, 'areas.view_all ve todas las áreas');
+  });
+
+  it('resumen del período: fechas obligatorias, desde antes que hasta y como máximo un año', async () => {
+    assert.equal((await get(reporter, '/api/v1/reports/overview')).statusCode, 422);
+    assert.equal((await get(reporter, '/api/v1/reports/overview?from=2026-02-01&to=2026-01-01')).statusCode, 422);
+    assert.equal((await get(reporter, '/api/v1/reports/overview?from=2025-01-01&to=2026-06-01')).statusCode, 422);
+    assert.equal((await get(reporter, '/api/v1/reports/overview?from=2026-01-01&to=2026-12-31')).statusCode, 200);
+    assert.equal((await get(reporter, "/api/v1/reports/overview?from=2026-01-01'--&to=2026-01-02")).statusCode, 422);
+    assert.equal((await h.request('GET', '/api/v1/reports/overview?from=2026-01-01&to=2026-01-02', {})).statusCode, 401);
+  });
+
   it('exportación: CSV con fórmulas neutralizadas, enmascarado según permiso y auditado', async () => {
     const clear = await get(viewer, `/api/v1/reports/campaigns/${campaignId}/export`);
     assert.equal(clear.statusCode, 200);

@@ -536,3 +536,14 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | T13 / ADR-011 (cuota) | Al aprobar se reserva solo la cuota de los destinatarios dentro de la ventana de 365 días; el consumo ocurre en cada envío diario | `integration/campaigns.test.js` |
 | T12 (contenido aprobado) | La foto con la fecha de envío de cada destinatario queda fija al aprobar | `campaigns.test.js` |
 | T39 / tope global | Supresión y tope global aplicados en cada envío diario; pausa y cancelación detienen los días siguientes | `integration/sending.test.js` |
+
+### Estilo visual, menú lateral y dashboard de reportes (2026-11-11, ADR-031)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A9 (frontend seguro) | Gráficos SVG construidos con `createElementNS` mediante `svg()`, que bloquea `on*`, `style`, `href` y `xlink:href`; sin `innerHTML` ni estilos en línea (alturas y colores por clases CSS); fuente servida desde el mismo origen (`font-src 'self'`) | ESLint (`no-unsanitized`), e2e con navegador real sin violaciones de CSP ni de Trusted Types, `frontend/tests/dashboard.test.js` |
+| ADR-008 / IDOR entre áreas | `GET /reports/overview` parte de las campañas filtradas con `areaCondition`; otra área recibe ceros y `areas.view_all` ve todas | `integration/reports.test.js`, `integration/authorization-matrix.test.js` |
+| A8 (validación) y costo de consulta | Fechas `format: date` obligatorias; período de 1 a 366 días, o 422 `invalid_period` | `integration/reports.test.js` |
+| Datos personales | El resumen devuelve solo agregados, sin correos, IP ni ubicación | Schema de salida de la ruta |
+| Parte B (apertura aproximada) | La aclaración sigue junto a los indicadores, y "Proxy" se separa y se explica en la dona | Revisión de la pantalla |
+| A6 (el frontend no es un control) | El menú lateral solo oculta entradas; el backend sigue autorizando cada request | `authorization-matrix.test.js` |

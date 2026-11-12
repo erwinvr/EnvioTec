@@ -24,6 +24,11 @@ const event = object({
   type: str, occurredAt: nullable, url: nullable, device: nullable, os: nullable, client: nullable, ip: nullable, location: nullable, userAgent: nullable,
 }, ['type', 'occurredAt']);
 const date = { type: 'string', format: 'date' };
+const overview = object({
+  from: str, to: str, campaigns: int, stats,
+  daily: { type: 'array', items: object({ day: str, sent: int, opened: int, clicked: int }, ['day', 'sent', 'opened', 'clicked']) },
+  devices: { type: 'array', items: object({ device: str, recipients: int }, ['device', 'recipients']) },
+}, ['from', 'to', 'campaigns', 'stats', 'daily', 'devices']);
 
 export async function reportsRoutes(app, { db, audit }) {
   const service = createReportsService({ db, repository: createReportsRepository(), audit });
@@ -34,6 +39,11 @@ export async function reportsRoutes(app, { db, audit }) {
     querystring: object({ ...paging, search: { type: 'string', maxLength: 100 }, from: date, to: date }),
     response: { 200: successSchema({ type: 'array', items: campaign }, pageMeta) },
   }, async (r) => paged(await service.campaigns(r.auth, r.query), r.query));
+
+  route('GET', '/api/v1/reports/overview', 'reports.view', {
+    querystring: object({ from: date, to: date }, ['from', 'to']),
+    response: { 200: successSchema(overview) },
+  }, async (r) => ok(await service.overview(r.auth, r.query)));
 
   route('GET', '/api/v1/reports/campaigns/:id', 'reports.view', { params: idParams, response: { 200: successSchema(campaign) } },
     async (r) => ok(await service.campaign(r.auth, r.params.id)));

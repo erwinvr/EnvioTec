@@ -134,6 +134,7 @@ const MATRIX_CASES = {
   'POST /api/v1/campaigns/:id/pause': { url: (f) => `/api/v1/campaigns/${f.campaigns.toPause}/pause`, success: 200 },
   'POST /api/v1/campaigns/:id/resume': { url: (f) => `/api/v1/campaigns/${f.campaigns.toResume}/resume`, success: 200 },
   'GET /api/v1/reports/campaigns': { url: () => '/api/v1/reports/campaigns', success: 200 },
+  'GET /api/v1/reports/overview': { url: () => '/api/v1/reports/overview?from=2026-01-01&to=2026-01-31', success: 200 },
   'GET /api/v1/reports/campaigns/:id': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}`, success: 200 },
   'GET /api/v1/reports/campaigns/:id/recipients': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}/recipients`, success: 200 },
   'GET /api/v1/reports/campaigns/:id/recipients/:recipientId/events': { url: (f) => `/api/v1/reports/campaigns/${f.campaigns.draft}/recipients/${f.campaigns.draft}/events`, success: 200 },

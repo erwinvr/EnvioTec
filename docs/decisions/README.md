@@ -34,3 +34,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [028](028-variables-de-lista-y-asociacion-de-columnas.md) | Variables de lista y asociación de columnas del CSV | Aceptado |
 | [029](029-sincronizacion-y-conciliacion-sin-indice.md) | Sincronización y conciliación sin depender del índice; detalle de aperturas | Aceptado |
 | [030](030-variables-de-fecha-y-envio-por-fecha.md) | Variables de fecha y envío según la fecha de cada contacto | Aceptado |
+| [031](031-estilo-visual-y-dashboard-de-reportes.md) | Estilo visual, menú lateral y dashboard de reportes | Aceptado |

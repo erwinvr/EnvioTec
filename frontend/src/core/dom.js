@@ -40,6 +40,21 @@ export function el(tag, props = {}, children = []) {
   return node;
 }
 
+// SVG for charts and icons: same rules as el(), and no links at all (href,
+// xlink:href), so an SVG node can never point anywhere.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const BLOCKED_SVG_ATTRIBUTES = /^(on|style$|href$|xlink:href$)/i;
+
+export function svg(tag, attrs = {}, children = []) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (BLOCKED_SVG_ATTRIBUTES.test(name)) throw new Error(`attribute not allowed: ${name}`);
+    node.setAttribute(name, String(value));
+  }
+  return append(node, children);
+}
+
 export function append(parent, children) {
   for (const child of [children].flat(Infinity)) {
     if (child === null || child === undefined || child === false) continue;

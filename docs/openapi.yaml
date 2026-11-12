@@ -1307,6 +1307,19 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Error' }
+  /api/v1/reports/overview:
+    get:
+      summary: 'Resumen del período para el dashboard (ADR-031): campañas iniciadas en el período, cifras, serie diaria y dispositivos (alcance por área)'
+      operationId: getReportsOverview
+      x-enviotec-permission: reports.view
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date }, description: 'Desde (America/La_Paz)' }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Hasta, inclusive; como máximo 366 días después de from' }
+      responses:
+        '200': { description: 'campaigns, stats (como en cada campaña), daily [{day, sent, opened, clicked}] y devices [{device, recipients}]; las aperturas son aproximadas' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Error' }
   /api/v1/reports/campaigns/{id}:
     get:
       summary: 'Cifras de una campaña'
