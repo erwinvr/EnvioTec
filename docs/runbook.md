@@ -20,55 +20,7 @@ alias dc='docker compose -f docker-compose.yml'
 
 ## 2. Primer despliegue
 
-1. **Secretos.** Cree el directorio de secretos (`SECRETS_DIR`, por defecto `./secrets`) con permisos `700`, propiedad del operador. Ponga un archivo por secreto, sin salto de línea final, con los nombres de la sección `secrets:` de `docker-compose.yml`:
-
-   ```bash
-   umask 077; mkdir -p secrets
-   for name in postgres_password db_owner_password db_runtime_password redis_backend_password redis_worker_password redis_files_password; do
-     openssl rand -hex 32 | tr -d '\n' > "secrets/$name"
-   done
-   openssl rand -base64 48 | tr -d '\n' > secrets/csrf_secret
-   openssl rand -base64 32 | tr -d '\n' > secrets/data_encryption_key
-   ```
-
-   - Las URL de conexión (`database_url`, `migration_database_url`, `redis_url_backend`, `redis_url_worker` y `redis_url_files`) siguen el formato de `scripts/generate-dev-secrets.sh` y usan las contraseñas anteriores.
-   - `tls_cert` y `tls_key` son el certificado de la CA interna y su clave.
-   - Las keys de Mandrill (de sistema y de campañas), la contraseña de bind de LDAP y la CA de AD se agregan como secretos adicionales (secciones 8 y 9).
-   - **Nunca** entran al repositorio ni se pegan en tickets o chats.
-   - Guarde una copia de `data_encryption_key` en el gestor de contraseñas de la organización: sin ella, los MFA ya configurados no se pueden recuperar.
-
-2. **Construir y levantar:**
-
-   ```bash
-   dc build
-   dc up -d --wait postgres redis
-   dc run --rm tools node scripts/migrate.js up
-   dc run --rm tools node scripts/seed.js system
-   dc up -d --wait
-   ```
-
-3. **Cuentas iniciales:**
-
-   ```bash
-   dc run --rm -it tools node scripts/bootstrap-admin.js               # superadmin
-   dc run --rm -it tools node scripts/bootstrap-admin.js --emergency   # cuenta de emergencia (Parte B)
-   ```
-
-   - Las dos cuentas configuran el MFA en su primer ingreso.
-   - Las credenciales de la cuenta de emergencia se guardan en sobre cerrado o en una bóveda, con acceso de dos personas.
-
-4. **Parámetros** (pantalla *Parámetros*, permiso `settings.manage`):
-   - `notifications.admin_emails`;
-   - dominios de envío y de Reply-To;
-   - dominios permitidos para envíos de prueba;
-   - tope global mensual.
-
-5. **Verificación:**
-
-   ```bash
-   curl --cacert secrets/tls_cert -fsS https://<servidor>/health/ready
-   dc run --rm tools node scripts/audit-verify.js
-   ```
+El procedimiento completo está en el [manual de despliegue](deployment.md), sección 3: requisitos, secretos (directorio `700`, archivos `644`), archivos de Compose para Mandrill y AD, firewall, migraciones, cuentas iniciales, configuración y verificación.
 
 ## 3. Actualización a una nueva versión
 
@@ -177,27 +129,10 @@ dc run --rm tools node scripts/revoke-sessions.js --reason "Cuenta comprometida"
 
 ## 8. Red hacia el controlador de dominio (R17)
 
-Las redes del backend y del worker son internas. Para LDAPS en producción, agregue un archivo `docker-compose.ad.yml`, versionado junto al despliegue:
+Las redes del backend y del worker son internas. Para LDAPS, el despliegue agrega `docker-compose.ad.yml`, con la red `directory`, las variables `LDAP_*` y los secretos `ldap_ca_cert` y `ldap_bind_password`. El archivo completo está en el [manual de despliegue](deployment.md), sección 3.4.
 
-```yaml
-services:
-  backend:
-    networks: [edge, data, egress, directory]
-  worker:
-    networks: [data, egress, directory]
-networks:
-  directory:
-    driver: bridge
-```
-
-- En el firewall del host, la red `directory` solo puede salir hacia la IP del controlador de dominio, puerto 636.
-- Levante el stack con `docker compose -f docker-compose.yml -f docker-compose.ad.yml up -d --wait`.
-- Variables (`.env.example`):
-  - `LDAP_URL=ldaps://<dc>`;
-  - `LDAP_CA_CERT_FILE`, como secreto con la CA interna;
-  - `LDAP_BIND_DN` y `LDAP_BIND_PASSWORD_FILE`, de una cuenta de servicio **de solo lectura**;
-  - `LDAP_BASE_DN`;
-  - `LDAP_ALLOWED_GROUP_DN`.
+- En el firewall del host, la red `directory` solo puede salir hacia la IP del controlador de dominio, puerto 636 (manual, sección 3.5).
+- `LDAP_BIND_DN` es una cuenta de servicio **de solo lectura**.
 
 ## 9. Validación con el AD real (R15)
 

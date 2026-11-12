@@ -15,7 +15,8 @@ Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a 
 | [docs/decisions/](docs/decisions/README.md) | Decisiones de arquitectura (ADR) |
 | [docs/openapi.yaml](docs/openapi.yaml) | Especificación de la API |
 | [docs/hardening.md](docs/hardening.md) | Informe de hardening (ASVS 5.0 nivel 2) y hallazgos |
-| [docs/runbook.md](docs/runbook.md) | Operación: despliegue, respaldos, rotación de secretos, incidentes |
+| [docs/deployment.md](docs/deployment.md) | Manual de despliegue: ambiente de desarrollo y de producción |
+| [docs/runbook.md](docs/runbook.md) | Operación: actualización, respaldos, rotación de secretos, incidentes |
 
 ## Arquitectura
 
@@ -88,7 +89,7 @@ Se usa solo `docker-compose.yml` (sin el override):
 docker compose -f docker-compose.yml up -d --build --wait
 ```
 
-Los secretos se colocan en el directorio `SECRETS_DIR` (por defecto `./secrets`), uno por archivo, con los nombres declarados al final de `docker-compose.yml`. El certificado TLS (`tls_cert`, `tls_key`) lo emite la CA interna de la organización. Despliegue, actualización, respaldo y restauración, rotación de secretos, revocación masiva de sesiones y puesta en marcha del envío: [docs/runbook.md](docs/runbook.md).
+Los secretos se colocan en el directorio `SECRETS_DIR` (por defecto `./secrets`), uno por archivo, con los nombres declarados al final de `docker-compose.yml`. El certificado TLS (`tls_cert`, `tls_key`) lo emite la CA interna de la organización. Instalación paso a paso de ambos ambientes: [docs/deployment.md](docs/deployment.md). Actualización, respaldo y restauración, rotación de secretos, revocación masiva de sesiones y puesta en marcha del envío: [docs/runbook.md](docs/runbook.md).
 
 ## Variables de entorno
 
