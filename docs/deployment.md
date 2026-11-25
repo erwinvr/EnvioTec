@@ -165,15 +165,40 @@ Sin la key de campañas, las campañas y los envíos de prueba terminan como fal
 
 ### 2.5 Regenerar los secretos
 
-`--force` conserva las keys de Mandrill y la URL administrativa, y genera claves nuevas para los logins. Después hay que cambiarlas en el servidor:
+`--force` genera claves nuevas para los logins de la base, para Redis, para el CSRF y un certificado nuevo para nginx. Conserva lo que el script no puede generar y lo que necesitan los datos que ya están en el servidor:
+
+| Se conserva | Motivo |
+| --- | --- |
+| `mandrill_*_api_key` | Las entrega Mandrill |
+| `database_admin_url` | La escribe quien administra SQL Server |
+| `data_encryption_key` | Cifra los secretos de MFA guardados en la base: una clave nueva dejaría a todos los usuarios sin poder entrar. Para cambiarla, use `scripts/rotate-encryption-key.js` (runbook, sección 5) |
+| `dev_admin_password` | Contraseña del administrador de desarrollo, si existe |
+
+Después hay que cambiar las claves de los logins en el servidor. Para eso hace falta `secrets/database_admin_url`; si se borró después del aprovisionamiento, se vuelve a escribir (paso 3 de la sección 2.2):
 
 ```bash
 DB_HOST=192.168.200.108 npm run secrets:dev -- --force
 npm run db:provision -- --reset-passwords
-docker compose up -d --force-recreate backend worker
+docker compose up -d --force-recreate
 ```
 
 Para empezar de cero, el administrador de la base borra la base `enviotec` y los logins `enviotec_owner` y `enviotec_runtime`. Después se repiten los pasos 6 a 9 de la sección 2.2.
+
+### 2.6 Instalación anterior con PostgreSQL
+
+Hasta el 2026-11-24, EnvioTec usaba PostgreSQL en un contenedor (ADR-032). Al actualizar una instalación de esa época:
+
+1. **Los datos no se migran solos.** La base de SQL Server empieza vacía (catálogo, parámetros, áreas de ejemplo y el superadmin que se cree con el bootstrap). Los usuarios configuran el MFA de nuevo.
+2. **Los datos anteriores quedan en el volumen `enviotec_pgdata`**, que Docker Compose ya no usa ni borra. Antes de eliminarlo, guarde un respaldo si puede hacer falta consultarlo:
+
+   ```bash
+   docker run --rm -v enviotec_pgdata:/data:ro -v "$PWD/backup:/backup" alpine:3.22 \
+     tar -czf /backup/pgdata-$(date -u +%Y%m%d).tar.gz -C /data .
+   docker volume rm enviotec_pgdata      # solo cuando ya no se necesite
+   ```
+
+3. Los secretos de PostgreSQL (`postgres_password`, `db_owner_password`, `db_runtime_password`) ya no se usan y se pueden borrar de `secrets/`.
+4. El contenedor `postgres` se elimina con `docker compose down --remove-orphans`.
 
 ---
 
@@ -198,6 +223,7 @@ Si usa los archivos adicionales de la sección 3.4, agréguelos al alias, por ej
 | Login administrativo | Uno nominal del equipo de base de datos, solo para el aprovisionamiento; nunca `sa` con una clave compartida (R20) |
 | Nombre y certificado de la aplicación | Un nombre DNS interno (por ejemplo `enviotec.empresa.local`) y un certificado de la CA interna con ese nombre en el `subjectAltName` |
 | Red de entrada | Solo la red interna llega a los puertos 443 y 80 (80 solo redirige a https). Ningún otro puerto se expone |
+| Subredes de Docker | Un rango que no use la organización ni sus VPN, reservado en `/etc/docker/daemon.json` (`default-address-pools`) antes del primer `up`; si se superpone con el de los usuarios, no pueden llegar a la aplicación (sección 4) |
 | Red de salida | El proxy de egreso sale a internet solo hacia `mandrillapp.com` y `database.clamav.net`; la red `database` solo hacia SQL Server, puerto 1433 (sección 3.5) |
 | Active Directory | Si se usa: el puerto 636 (LDAPS) del controlador de dominio, alcanzable desde el servidor |
 | Respaldos | La base, con las herramientas de SQL Server del equipo de base de datos; los archivos (volumen `filestore`), a un destino fuera del servidor, cifrado y con acceso restringido (runbook, sección 4) |
@@ -463,6 +489,7 @@ dc ps
 | `Login failed for user '..._runtime'` | Logins sin crear, claves distintas de las de `secrets/` o base inexistente | `npm run db:provision` (o `-- --reset-passwords` si regeneró los secretos) |
 | `Failed to connect ... ETIMEOUT` o `ECONNREFUSED` | El firewall o la red no dejan llegar a SQL Server por el 1433 | Revise la sección 3.5 y que el servidor de base acepte conexiones TCP |
 | `The ... permission was denied` en un log del backend | Una tabla nueva sin `GRANT` a `app_runtime`, o migraciones sin aplicar | `dc build tools` y `migrate.js up`; cada migración otorga sus permisos |
+| El navegador no llega a la aplicación (la página queda cargando y vence), aunque `curl https://localhost/health/ready` en el servidor responde 200 y nginx no registra el pedido | Una subred de Docker (por defecto `172.17.0.0/16` a `172.31.0.0/16`) coincide con la red o la VPN del equipo del usuario: el servidor manda las respuestas a ese bridge de Docker | Compare `ip -4 route` del servidor con la IP del cliente. Reserve para Docker un rango que la organización no use, en `/etc/docker/daemon.json`: `{"default-address-pools": [{"base": "10.250.0.0/16", "size": 24}]}`; reinicie Docker y recree las redes con `docker compose down` y `up -d`. Si cambia `EDGE_SUBNET`, ajuste también `NGINX_IP` en `.env` |
 | Los formularios fallan con error de CSRF u origen | `APP_ORIGIN` no coincide con la URL del navegador | Ajuste `.env` y `docker compose up -d backend` |
 | Los archivos subidos quedan en "procesando" | ClamAV sin firmas o el file-processor caído | `docker compose ps clamav file-processor` y los logs de `clamav` |
 | El worker registra *mandrill unreachable* | El proxy de egreso tiene el DNS viejo o el firewall bloquea la salida | `docker compose up -d --force-recreate egress-proxy` y revisar la sección 3.5 |

@@ -48,7 +48,7 @@ Al cerrar y aprobarse cada fase, actualiza esta sección (fase actual, fases apr
 ## Comandos
 
 - `npm ci`: herramientas de lint en el host.
-- `DB_HOST=<servidor> npm run secrets:dev`: genera `./secrets` (aleatorios, URLs de SQL Server con los logins `enviotec_owner` y `enviotec_runtime`) y un certificado autofirmado. `-- --force` los regenera, conservando las keys de Mandrill y `database_admin_url` (después, `npm run db:provision -- --reset-passwords`).
+- `DB_HOST=<servidor> npm run secrets:dev`: genera `./secrets` (aleatorios, URLs de SQL Server con los logins `enviotec_owner` y `enviotec_runtime`) y un certificado autofirmado. `-- --force` los regenera, conservando las keys de Mandrill, `database_admin_url` y `data_encryption_key` (después, `npm run db:provision -- --reset-passwords`).
 - `npm run db:provision`: crea o pone al día la base y sus logins de mínimo privilegio en SQL Server con `secrets/database_admin_url` (login administrativo, solo para esto; ADR-032).
 - `docker compose up -d --build --wait`: stack de desarrollo (aplica `docker-compose.override.yml`).
 - `docker compose -f docker-compose.yml up -d --build --wait`: stack de producción, sin override.

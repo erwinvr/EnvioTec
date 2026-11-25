@@ -44,11 +44,14 @@ fi
 
 command -v openssl >/dev/null || { echo "Se requiere openssl." >&2; exit 1; }
 
-# --force keeps what this script cannot generate: the Mandrill keys and the
-# administrative URL of an external SQL Server.
+# --force keeps what this script cannot generate (the Mandrill keys and the
+# administrative URL of an external SQL Server) and what the data in that
+# server depends on: data_encryption_key encrypts the MFA secrets, and a new
+# one would leave every enrolled user unable to sign in (rotate it with
+# scripts/rotate-encryption-key.js instead).
 keep=$(mktemp -d)
 trap 'rm -rf "$keep"' EXIT
-for name in mandrill_campaigns_api_key mandrill_system_api_key database_admin_url; do
+for name in mandrill_campaigns_api_key mandrill_system_api_key database_admin_url data_encryption_key dev_admin_password; do
   if [[ -f "$dir/$name" && "$sqlserver" -eq 0 ]]; then cp -p "$dir/$name" "$keep/"; fi
 done
 
@@ -84,7 +87,7 @@ write redis_url_worker "redis://worker:${redis_worker_password}@redis:6379/0"
 write redis_files_password "$redis_files_password"
 write redis_url_files "redis://files:${redis_files_password}@redis:6379/0"
 write csrf_secret "$(openssl rand -base64 48 | tr -d '\n')"
-write data_encryption_key "$(openssl rand -base64 32 | tr -d '\n')"
+[[ -f "$dir/data_encryption_key" ]] || write data_encryption_key "$(openssl rand -base64 32 | tr -d '\n')"
 
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
   -subj "/CN=localhost" \

@@ -83,7 +83,7 @@ docker compose down                       # detener (conserva los datos)
 docker compose down -v                    # detener y borrar volúmenes (Redis y archivos; la base es externa)
 ```
 
-Para regenerar los secretos: `npm run secrets:dev -- --force` (conserva las keys de Mandrill y la URL administrativa) y luego `npm run db:provision -- --reset-passwords`, que cambia las claves de los logins en el servidor.
+Para regenerar los secretos: `npm run secrets:dev -- --force` (conserva las keys de Mandrill, la URL administrativa y `data_encryption_key`, que cifra los MFA guardados) y luego `npm run db:provision -- --reset-passwords`, que cambia las claves de los logins en el servidor.
 
 ## Producción
 
