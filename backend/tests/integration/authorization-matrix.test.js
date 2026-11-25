@@ -4,9 +4,7 @@
 // being valid. Fixtures are created with the owner user and removed at the end.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { after, before, describe, it } from 'node:test';
-import pg from 'pg';
 import { pino } from 'pino';
 import { buildApp } from '../../src/app.js';
 import { generateSessionToken, hashToken, SESSION_COOKIE } from '../../src/core/auth/session-token.js';
@@ -14,6 +12,8 @@ import { loadConfig } from '../../src/core/config/index.js';
 import { createPool } from '../../src/core/db/pool.js';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
 import { createRedisClient } from '../../src/core/redis/client.js';
+import { connectOwner } from '../helpers/database.js';
+import { emailHash } from '../../src/modules/suppressions/suppressions.repository.js';
 import { multipart } from '../helpers/auth-fixtures.js';
 import { docx } from '../helpers/docx.js';
 import { pdf } from '../helpers/pdf.js';
@@ -168,14 +168,13 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     roleId, status = 'active', deleted = false, lockedMinutes = 0, expiresInMinutes = 43200, mfa = Boolean(roleId),
   } = {}) {
     const { rows } = await owner.query(
-      `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, status, deleted_at,
+      `DECLARE @out TABLE (id uniqueidentifier); INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, status, deleted_at,
                           locked_until, expires_at, mfa_secret_encrypted, mfa_enabled_at)
-       VALUES ($1, $2, $8, 'local', '$argon2id$v=19$m=19456,t=2,p=1$x$y', $3, $4,
-               CASE WHEN $5 THEN now() END,
-               CASE WHEN $6 > 0 THEN now() + make_interval(mins => $6) END,
-               now() + make_interval(mins => $7),
-               CASE WHEN $9 THEN '\\x00'::bytea END, CASE WHEN $9 THEN now() END)
-       RETURNING id`,
+       OUTPUT inserted.id INTO @out VALUES ($1, $2, $8, 'local', '$argon2id$v=19$m=19456,t=2,p=1$x$y', $3, $4,
+               CASE WHEN $5 = 1 THEN SYSUTCDATETIME() END,
+               CASE WHEN $6 > 0 THEN DATEADD(minute, $6, SYSUTCDATETIME()) END,
+               DATEADD(minute, $7, SYSUTCDATETIME()),
+               CASE WHEN $9 = 1 THEN 0x00 END, CASE WHEN $9 = 1 THEN SYSUTCDATETIME() END); SELECT id FROM @out;`,
       [`${PREFIX}.${name}`, `${PREFIX}.${name}@example.test`, fixtures.areaId, status, deleted, lockedMinutes,
         expiresInMinutes, `Usuario ${name}`, mfa],
     );
@@ -187,8 +186,8 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const token = generateSessionToken();
     await owner.query(
       `INSERT INTO sessions (id, user_id, expires_at, revoked_at, last_seen_at, mfa_verified_at, reauth_at)
-       VALUES ($1, $2, now() + interval '8 hours', CASE WHEN $3 THEN now() END, now() - make_interval(mins => $4),
-               now(), now())`,
+       VALUES ($1, $2, DATEADD(hour, 8, SYSUTCDATETIME()), CASE WHEN $3 = 1 THEN SYSUTCDATETIME() END, DATEADD(minute, -$4, SYSUTCDATETIME()),
+               SYSUTCDATETIME(), SYSUTCDATETIME())`,
       [hashToken(token), userId, revoked, idleMinutes],
     );
     tokens[name] = token;
@@ -197,80 +196,79 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
   const fixtures = {};
 
   before(async () => {
-    owner = new pg.Client({ connectionString: readFileSync(process.env.MIGRATION_DATABASE_URL_FILE, 'utf8').trim() });
-    await owner.connect();
+    owner = await connectOwner();
     config = loadConfig(process.env);
     const logger = pino({ level: 'silent' });
-    pool = createPool(config.database, logger, 'enviotec-tests');
+    pool = await createPool(config.database, logger, 'enviotec-tests');
     redis = createRedisClient(config.redis, logger);
     await redis.connect();
     fileQueue = createQueue(QUEUES.files, config.redis);
     sendQueue = createQueue(QUEUES.send, config.redis);
     app = await buildApp({ config, logger, db: pool, redis, fileQueue, sendQueue, checks: { database: async () => {} } });
 
-    const { rows: area } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [PREFIX]);
+    const { rows: area } = await owner.query('INSERT INTO areas (name) OUTPUT inserted.id VALUES ($1)', [PREFIX]);
     fixtures.areaId = area[0].id;
-    const { rows: role } = await owner.query('INSERT INTO roles (name) VALUES ($1) RETURNING id', [PREFIX]);
+    const { rows: role } = await owner.query('DECLARE @out TABLE (id uniqueidentifier); INSERT INTO roles (name) OUTPUT inserted.id INTO @out VALUES ($1); SELECT id FROM @out;', [PREFIX]);
     fixtures.roleId = role[0].id;
     const routePermissions = app.routeInventory.filter((route) => !route.public).map((route) => route.permission);
     await owner.query(
-      'INSERT INTO role_permissions (role_id, permission_id) SELECT $1, id FROM permissions WHERE code = ANY($2::text[])',
+      'INSERT INTO role_permissions (role_id, permission_id) SELECT $1, id FROM permissions WHERE code IN (SELECT value FROM OPENJSON($2))',
       [fixtures.roleId, routePermissions],
     );
 
     fixtures.targetId = await createUser('target', { mfa: false });
     // Roles the matrix user does not hold (nobody edits a role they hold).
-    const extra = await owner.query('INSERT INTO roles (name) VALUES ($1), ($2), ($3) RETURNING id',
+    const extra = await owner.query('DECLARE @out TABLE (id uniqueidentifier); INSERT INTO roles (name) OUTPUT inserted.id INTO @out VALUES ($1), ($2), ($3); SELECT id FROM @out;',
       [`${PREFIX}-extra`, `${PREFIX}-borrable`, `${PREFIX}-mapeado`]);
     [fixtures.extraRoleId, fixtures.deletableRoleId, fixtures.mappedRoleId] = extra.rows.map((row) => row.id);
-    const mapping = await owner.query('INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2) RETURNING id',
+    const mapping = await owner.query('DECLARE @out TABLE (id uniqueidentifier); INSERT INTO ad_group_role_mappings (group_dn, role_id) OUTPUT inserted.id INTO @out VALUES ($1, $2); SELECT id FROM @out;',
       [`CN=${PREFIX}-fijo,DC=empresa,DC=test`, fixtures.mappedRoleId]);
     fixtures.mappingId = mapping.rows[0].id;
     const allowed = await createUser('allowed', { roleId: fixtures.roleId });
     fixtures.allowedId = allowed;
-    const domains = await owner.query("SELECT key, value FROM system_settings WHERE key IN ('sending.sender_domains', 'sending.reply_to_domains')");
+    const domains = await owner.query("SELECT [key], value FROM system_settings WHERE [key] IN ('sending.sender_domains', 'sending.reply_to_domains')");
     fixtures.savedDomains = domains.rows;
-    await owner.query("UPDATE system_settings SET value = '[\"envios.matriz.test\"]' WHERE key = 'sending.sender_domains'");
+    await owner.query("UPDATE system_settings SET value = '[\"envios.matriz.test\"]' WHERE [key] = 'sending.sender_domains'");
     const sender = await owner.query(
-      'INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+      'INSERT INTO sender_identities (area_id, email, display_name) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [fixtures.areaId, `${PREFIX}@envios.matriz.test`, 'Matriz'],
     );
     fixtures.senderId = sender.rows[0].id;
-    const list = await owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [fixtures.areaId, `${PREFIX}-lista`]);
+    const list = await owner.query('INSERT INTO contact_lists (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [fixtures.areaId, `${PREFIX}-lista`]);
     fixtures.listId = list.rows[0].id;
-    const contact = await owner.query('INSERT INTO contacts (area_id, list_id, email) VALUES ($1, $2, $3) RETURNING id',
+    const contact = await owner.query('INSERT INTO contacts (area_id, list_id, email) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [fixtures.areaId, fixtures.listId, `${PREFIX}.c@matriz.test`]);
     fixtures.contactId = contact.rows[0].id;
     const imported = await owner.query(
       `INSERT INTO contact_imports (area_id, list_id, file_id, original_name, size_bytes, sha256, created_by, status)
-       VALUES ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'failed') RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, $2, NEWID(), 'm.csv', 10, REPLICATE('a', 64), $3, 'failed')`,
       [fixtures.areaId, fixtures.listId, allowed],
     );
     fixtures.importId = imported.rows[0].id;
     // Imports waiting for their column mapping (ADR-028), and a list with variables.
     const awaiting = await owner.query(
       `INSERT INTO contact_imports (area_id, list_id, file_id, original_name, size_bytes, sha256, created_by, status, header, sample)
-       VALUES ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'awaiting_mapping', '["email"]', '[["m@matriz.test"]]'),
-              ($1, $2, gen_random_uuid(), 'm.csv', 10, repeat('a', 64), $3, 'awaiting_mapping', '["email"]', '[]') RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, $2, NEWID(), 'm.csv', 10, REPLICATE('a', 64), $3, 'awaiting_mapping', '["email"]', '[["m@matriz.test"]]'),
+              ($1, $2, NEWID(), 'm.csv', 10, REPLICATE('a', 64), $3, 'awaiting_mapping', '["email"]', '[]')`,
       [fixtures.areaId, fixtures.listId, allowed],
     );
     [fixtures.toMapImportId, fixtures.toCancelImportId] = awaiting.rows.map((row) => row.id);
     const varList = await owner.query(
-      `INSERT INTO contact_lists (area_id, name, attributes, attribute_labels) VALUES ($1, $2, '{ciudad,borrable}', '{"ciudad":"Ciudad","borrable":"Borrable"}') RETURNING id`,
+      `INSERT INTO contact_lists (area_id, name, attributes, attribute_labels) OUTPUT inserted.id VALUES ($1, $2, '["ciudad","borrable"]', '{"ciudad":"Ciudad","borrable":"Borrable"}')`,
       [fixtures.areaId, `${PREFIX}-variables`],
     );
     fixtures.varListId = varList.rows[0].id;
     const suppression = await owner.query(
-      "INSERT INTO suppressions (email_hash, email, reason, source) VALUES (sha256(convert_to($1, 'UTF8')), $1, 'manual', 'manual') RETURNING id",
-      [`${PREFIX}.s@matriz.test`],
+      "DECLARE @out TABLE (id uniqueidentifier); INSERT INTO suppressions (email_hash, email, reason, source) OUTPUT inserted.id INTO @out VALUES ($2, $1, 'manual', 'manual'); SELECT id FROM @out;",
+      [`${PREFIX}.s@matriz.test`, emailHash(`${PREFIX}.s@matriz.test`)],
     );
     fixtures.suppressionId = suppression.rows[0].id;
-    const templates = await owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2), ($1, $3) RETURNING id',
+    const templates = await owner.query('INSERT INTO templates (area_id, name) OUTPUT inserted.id VALUES ($1, $2), ($1, $3)',
       [fixtures.areaId, `${PREFIX}-plantilla`, `${PREFIX}-archivable`]);
     [fixtures.templateId, fixtures.archivableTemplateId] = templates.rows.map((row) => row.id);
     await owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, created_by)
-       VALUES ($1, 1, 'ready', gen_random_uuid(), 'm.docx', 10, repeat('a', 64), '<p>Hola</p>', 'Hola', $2)`,
+       VALUES ($1, 1, 'ready', NEWID(), 'm.docx', 10, REPLICATE('a', 64), '<p>Hola</p>', 'Hola', $2)`,
       [fixtures.templateId, allowed],
     );
     // Campaign fixtures, one per state-changing route. The matrix user holds
@@ -278,19 +276,19 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     // the target user (maker-checker), and quotas cover the reservations.
     await owner.query('INSERT INTO contacts (area_id, list_id, email) VALUES ($1, $2, $3)', [fixtures.areaId, fixtures.listId, `${PREFIX}.r@matriz.test`]);
     await owner.query('INSERT INTO quotas (user_id, assigned) VALUES ($1, 100), ($2, 100)', [allowed, fixtures.targetId]);
-    const campaignSender = await owner.query('INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+    const campaignSender = await owner.query('INSERT INTO sender_identities (area_id, email, display_name) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [fixtures.areaId, `${PREFIX}.c@envios.matriz.test`, 'Campañas']);
     fixtures.campaignSenderId = campaignSender.rows[0].id;
     const attachment = await owner.query(
       `INSERT INTO campaign_attachments (area_id, file_id, original_name, size_bytes, sha256, status, created_by)
-       VALUES ($1, gen_random_uuid(), 'm.pdf', 10, repeat('a', 64), 'ready', $2) RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, NEWID(), 'm.pdf', 10, REPLICATE('a', 64), 'ready', $2)`,
       [fixtures.areaId, allowed],
     );
     const versionId = (await owner.query('SELECT id FROM template_versions WHERE template_id = $1', [fixtures.templateId])).rows[0].id;
     const campaign = async (status, extra = {}) => (await owner.query(
       `INSERT INTO campaigns (area_id, name, subject, template_version_id, list_id, sender_id, attachment_id, status, created_by,
                               submitted_by, approved_by, reserved, recipient_count)
-       VALUES ($1, 'Matriz', 'Asunto', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, 'Matriz', 'Asunto', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [fixtures.areaId, versionId, fixtures.listId, fixtures.campaignSenderId, attachment.rows[0].id, status, extra.createdBy ?? allowed,
         extra.submittedBy ?? null, extra.approvedBy ?? null, extra.reserved ?? 0, extra.reserved ?? null],
     )).rows[0].id;
@@ -316,7 +314,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
     const expired = generateSessionToken();
     await owner.query(
       `INSERT INTO sessions (id, user_id, created_at, last_seen_at, expires_at)
-       VALUES ($1, $2, now() - interval '9 hours', now() - interval '1 minute', now() - interval '1 hour')`,
+       VALUES ($1, $2, DATEADD(hour, -9, SYSUTCDATETIME()), DATEADD(minute, -1, SYSUTCDATETIME()), DATEADD(hour, -1, SYSUTCDATETIME()))`,
       [hashToken(expired), allowed],
     );
     tokens.absoluteExpired = expired;
@@ -332,17 +330,17 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
       // Audited users cannot be deleted (audit_logs references them with ON
       // DELETE RESTRICT): fixtures are soft-deleted and lose their access.
       await owner.query(
-        `UPDATE sessions SET revoked_at = now(), revoked_reason = 'test_cleanup'
+        `UPDATE sessions SET revoked_at = SYSUTCDATETIME(), revoked_reason = 'test_cleanup'
           WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE username LIKE $1)`,
         [`${PREFIX}.%`],
       );
       await owner.query('DELETE FROM ad_group_role_mappings WHERE group_dn LIKE $1', [`CN=${PREFIX}-%`]);
       for (const row of fixtures.savedDomains ?? []) {
-        await owner.query('UPDATE system_settings SET value = $2::jsonb WHERE key = $1', [row.key, JSON.stringify(row.value)]);
+        await owner.query('UPDATE system_settings SET value = $2 WHERE [key] = $1', [row.key, JSON.stringify(row.value)]);
       }
       await owner.query('DELETE FROM user_roles WHERE role_id = $1', [fixtures.roleId]);
       await owner.query('DELETE FROM role_permissions WHERE role_id = $1', [fixtures.roleId]);
-      await owner.query("UPDATE users SET deleted_at = now(), status = 'disabled' WHERE username LIKE $1", [`${PREFIX}.%`]);
+      await owner.query("UPDATE users SET deleted_at = SYSUTCDATETIME(), status = 'disabled' WHERE username LIKE $1", [`${PREFIX}.%`]);
       await owner.end();
     }
   });
@@ -419,7 +417,7 @@ describe('matriz de autorización', { skip: !enabled && 'requiere RUN_INTEGRATIO
 
   it('una sesión con MFA pendiente no usa sus permisos (AUTH_STEP_REQUIRED)', async () => {
     const pending = generateSessionToken();
-    await owner.query('INSERT INTO sessions (id, user_id, expires_at) SELECT $1, id, now() + interval \'1 hour\' FROM users WHERE username = $2',
+    await owner.query('INSERT INTO sessions (id, user_id, expires_at) SELECT $1, id, DATEADD(hour, 1, SYSUTCDATETIME()) FROM users WHERE username = $2',
       [hashToken(pending), `${PREFIX}.allowed`]);
     const res = await request('GET', '/api/v1/permissions', pending);
     assert.equal(res.statusCode, 403);

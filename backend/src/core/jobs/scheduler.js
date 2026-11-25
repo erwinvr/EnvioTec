@@ -1,20 +1,19 @@
-// Periodic jobs of the worker (ADR-020). Each run takes a session-level
-// advisory lock named after the job: with several worker replicas, only one
-// runs it at a time and the others skip that round. Jobs are idempotent, so a
-// failed or skipped round is simply repeated on the next one.
+import { tryLockName } from '../db/transaction.js';
+
+// Periodic jobs of the worker (ADR-020). Each run holds an application lock
+// named after the job, in a transaction of its own that only keeps the lock
+// (the job works on other connections): with several worker replicas, only
+// one runs it at a time and the others skip that round. Jobs are idempotent,
+// so a failed or skipped round is simply repeated on the next one.
 
 export async function runExclusive(pool, name, fn) {
   const client = await pool.connect();
+  await client.begin();
   try {
-    const { rows } = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [`enviotec.job.${name}`]);
-    if (!rows[0].acquired) return { skipped: true };
-    try {
-      return await fn();
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [`enviotec.job.${name}`]);
-    }
+    if (!(await tryLockName(client, `enviotec.job.${name}`))) return { skipped: true };
+    return await fn();
   } finally {
-    client.release();
+    await client.rollback();
   }
 }
 

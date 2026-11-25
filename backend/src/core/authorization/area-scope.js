@@ -35,7 +35,7 @@ export function writeScopeFor(auth) {
 export function areaCondition(scope, column, params) {
   if (!isSafeColumn(column)) throw new Error(`invalid column name for area condition: ${column}`);
   if (!scope) throw new AuthorizationError();
-  if (scope.all === true) return 'TRUE';
+  if (scope.all === true) return '1 = 1';
   if (typeof scope.areaId !== 'string' || scope.areaId === '') throw new AuthorizationError();
   params.push(scope.areaId);
   return `${column} = $${params.length}`;

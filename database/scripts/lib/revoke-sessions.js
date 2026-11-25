@@ -1,3 +1,5 @@
+import { createAuditService } from '../../../backend/src/core/audit/audit.service.js';
+
 // Mass revocation of sessions (runbook, incident response): every active
 // session, or only those of one user, revoked in one audited transaction.
 export async function revokeSessions(client, { reason, userId = null }) {
@@ -5,13 +7,13 @@ export async function revokeSessions(client, { reason, userId = null }) {
     throw new Error('el motivo es obligatorio (5 a 100 caracteres)');
   }
   const { rowCount } = await client.query(
-    `UPDATE sessions SET revoked_at = now(), revoked_reason = 'mass_revocation'
-      WHERE revoked_at IS NULL AND expires_at > now() AND ($1::uuid IS NULL OR user_id = $1)`,
+    `UPDATE sessions SET revoked_at = SYSUTCDATETIME(), revoked_reason = 'mass_revocation'
+      WHERE revoked_at IS NULL AND expires_at > SYSUTCDATETIME() AND ($1 IS NULL OR user_id = $1)`,
     [userId],
   );
-  await client.query(
-    "SELECT append_audit_log('system', NULL, NULL, 'session.mass_revoke', 'sessions', $1, 'success', NULL, NULL, NULL, jsonb_build_object('sessions', $2::int, 'reason', $3::text))",
-    [userId, rowCount, reason.trim()],
-  );
+  await createAuditService().record(client, {
+    actor: { type: 'system' }, action: 'session.mass_revoke', resourceType: 'sessions', resourceId: userId, result: 'success',
+    metadata: { sessions: rowCount, reason: reason.trim() },
+  });
   return { sessions: rowCount };
 }

@@ -1,5 +1,12 @@
 # Development only. Docker Compose applies this file automatically with
 # `docker compose up`. Never used in production or in scripts/check.sh.
+# The development database is the organization's SQL Server, whose
+# certificate is self-signed: TLS stays on, but the certificate is accepted
+# without a CA (DATABASE_TRUST_SERVER_CERTIFICATE, refused in production).
+x-dev-database: &dev-database
+  DATABASE_TRUST_SERVER_CERTIFICATE: "true"
+  DATABASE_CA_CERT_FILE: ""
+
 services:
   backend:
     build:
@@ -9,8 +16,10 @@ services:
     image: enviotec/backend:dev
     command: ["node", "--watch", "src/server.js"]
     environment:
+      <<: *dev-database
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+    secrets: !override [database_url, redis_url_backend, csrf_secret, data_encryption_key]
     volumes:
       - ./backend/src:/app/src:ro
 
@@ -22,12 +31,13 @@ services:
     image: enviotec/backend:dev
     command: ["node", "--watch", "src/worker.js"]
     environment:
+      <<: *dev-database
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       # Real campaign sending through Mandrill (ADR-024): only the worker
       # holds the campaign key. Without this file, nothing is sent.
       MANDRILL_CAMPAIGNS_API_KEY_FILE: /run/secrets/mandrill_campaigns_api_key
-    secrets: [database_url, redis_url_worker, mandrill_campaigns_api_key]
+    secrets: !override [database_url, redis_url_worker, mandrill_campaigns_api_key]
     volumes:
       - ./backend/src:/app/src:ro
 
@@ -46,13 +56,11 @@ services:
 
   tools:
     environment:
+      <<: *dev-database
       NODE_ENV: development
+    secrets: !override [migration_database_url]
 
-  # Database and Redis reachable from the host, on localhost only.
-  postgres:
-    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
-    networks: [data, public]
-
+  # Redis reachable from the host, on localhost only.
   redis:
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     networks: [data, files, public]

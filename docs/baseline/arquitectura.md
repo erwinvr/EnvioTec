@@ -24,7 +24,7 @@
        │                      │
        ▼                      ▼
 ┌──────────────┐      ┌──────────────┐
-│ PostgreSQL   │      │ Redis        │
+│ SQL Server   │      │ Redis        │
 │ (red interna)│      │ (red interna)│
 └──────────────┘      └──────────────┘
 ```

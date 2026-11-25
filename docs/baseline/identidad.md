@@ -4,7 +4,7 @@
 
 ## A5. Autenticación y sesiones
 
-**Decisión:** sesiones server-side almacenadas en PostgreSQL, con un token opaco en cookie. **No se usa JWT** para la sesión del navegador. JWT solo se considera si la Parte B declara clientes no navegador (apps móviles, integraciones), y en ese caso se documenta en un ADR.
+**Decisión:** sesiones server-side almacenadas en la base de datos, con un token opaco en cookie. **No se usa JWT** para la sesión del navegador. JWT solo se considera si la Parte B declara clientes no navegador (apps móviles, integraciones), y en ese caso se documenta en un ADR.
 
 **Sesión:**
 

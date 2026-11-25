@@ -158,7 +158,7 @@ describe('MFA, contraseñas y recuperación', { skip: !enabled && 'requiere RUN_
     await h.request('POST', '/api/v1/auth/password/forgot', { payload: { email: user.email } });
     await new Promise((resolve) => setImmediate(resolve));
     const token = new URL(mailer.sent.at(-1).text.match(/https:\/\/\S+/)[0].replace('/#/', '/')).searchParams.get('token');
-    await h.owner.query("UPDATE password_reset_tokens SET created_at = now() - interval '40 minutes', expires_at = now() - interval '15 minutes' WHERE user_id = $1", [user.id]);
+    await h.owner.query("UPDATE password_reset_tokens SET created_at = DATEADD(minute, -40, SYSUTCDATETIME()), expires_at = DATEADD(minute, -15, SYSUTCDATETIME()) WHERE user_id = $1", [user.id]);
     const res = await h.request('POST', '/api/v1/auth/password/reset', { payload: { token, newPassword: NEW_PASSWORD } });
     assert.equal(res.statusCode, 422);
   });
@@ -170,7 +170,7 @@ describe('MFA, contraseñas y recuperación', { skip: !enabled && 'requiere RUN_
     assert.equal(target.res.statusCode, 401, 'sin AD habilitado la cuenta de AD no entra');
 
     // Enrolling MFA counts as a reauthentication (A5); it is aged past the 5 minutes.
-    await h.owner.query("UPDATE sessions SET reauth_at = now() - interval '6 minutes' WHERE id = $1", [hashToken(adminToken)]);
+    await h.owner.query("UPDATE sessions SET reauth_at = DATEADD(minute, -6, SYSUTCDATETIME()) WHERE id = $1", [hashToken(adminToken)]);
     const noReauth = await h.request('POST', `/api/v1/users/${adUser.id}/mfa/reset`, { token: adminToken });
     assert.equal(noReauth.statusCode, 403);
     assert.equal(noReauth.json().error.code, 'REAUTH_REQUIRED');
@@ -193,9 +193,10 @@ describe('MFA, contraseñas y recuperación', { skip: !enabled && 'requiere RUN_
 
   it('la cadena de auditoría queda enlazada y cada hash se puede recalcular', async () => {
     const { rows } = await h.owner.query(
-      `SELECT seq, hash, prev_hash, hash = audit_log_canonical(id, occurred_at, actor_type, actor_user_id, actor_session_id,
-              action, resource_type, resource_id, result, ip, user_agent, request_id, metadata, prev_hash) AS valid
-         FROM audit_logs ORDER BY seq DESC LIMIT 50`,
+      `SELECT TOP (50) seq, hash, prev_hash,
+              CAST(CASE WHEN hash = dbo.audit_log_canonical(id, occurred_at, actor_type, actor_user_id, actor_session_id,
+                   action, resource_type, resource_id, result, ip, user_agent, request_id, metadata, prev_hash) THEN 1 ELSE 0 END AS bit) AS valid
+         FROM audit_logs ORDER BY seq DESC`,
     );
     assert.ok(rows.length > 10);
     for (let i = 0; i < rows.length - 1; i += 1) {

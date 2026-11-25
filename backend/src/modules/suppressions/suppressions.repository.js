@@ -1,7 +1,13 @@
-// SQL of the global suppression list. The key is the SHA-256 of the
-// lowercased email, computed in the database so every query agrees.
+import { createHash } from 'node:crypto';
+import { escapeLike, page } from '../../core/db/sql.js';
 
-const HASH = "sha256(convert_to(lower($1::text), 'UTF8'))";
+// SQL of the global suppression list. The key is the SHA-256 of the
+// lowercased email (UTF-8): computed here for the addresses that arrive as
+// parameters, and by the database (email_hash columns) for stored contacts
+// and recipients; both agree, and a CHECK keeps a stored address and its
+// hash consistent.
+
+export const emailHash = (email) => createHash('sha256').update(email.toLowerCase()).digest();
 
 export function createSuppressionsRepository() {
   return {
@@ -9,37 +15,41 @@ export function createSuppressionsRepository() {
       const params = [];
       let where = '';
       if (search) {
-        params.push(search.toLowerCase());
         // Exact match by hash also finds anonymized entries (no stored email).
-        where = `WHERE s.email_hash = ${HASH.replace('$1', `$${params.length}`)} OR s.email ILIKE '%' || $${params.length} || '%'`;
+        params.push(emailHash(search), `%${escapeLike(search)}%`);
+        where = "WHERE s.email_hash = $1 OR s.email LIKE $2 ESCAPE '\\'";
       }
-      const { rows: count } = await db.query(`SELECT count(*)::int AS total FROM suppressions s ${where}`, params);
-      params.push(limit, offset);
+      const { rows: count } = await db.query(`SELECT COUNT(*) AS total FROM suppressions s ${where}`, params);
+      params.push(offset, limit);
       const { rows } = await db.query(
-        `SELECT s.id, s.email, encode(s.email_hash, 'hex') AS email_hash, s.reason, s.source, s.note, s.created_at,
+        `SELECT s.id, s.email, LOWER(CONVERT(varchar(64), s.email_hash, 2)) AS email_hash, s.reason, s.source, s.note, s.created_at,
                 u.username AS created_by_username
            FROM suppressions s LEFT JOIN users u ON u.id = s.created_by
           ${where}
           ORDER BY s.created_at DESC
-          LIMIT $${params.length - 1} OFFSET $${params.length}`,
+          ${page(`$${params.length - 1}`, `$${params.length}`)}`,
         params,
       );
       return { rows, total: count[0].total };
     },
 
-    // Returns the new id, or null if the email was already suppressed.
+    // Returns the new id, or null if the email was already suppressed. The
+    // table has a guard trigger: OUTPUT goes through a table variable.
     async add(db, { email, reason, source, note = null, actorId = null }) {
       const { rows } = await db.query(
-        `INSERT INTO suppressions (email_hash, email, reason, source, note, created_by)
-         VALUES (${HASH}, $1, $2, $3, $4, $5)
-         ON CONFLICT (email_hash) DO NOTHING RETURNING id`,
-        [email.toLowerCase(), reason, source, note, actorId],
+        `DECLARE @out TABLE (id uniqueidentifier);
+         IF NOT EXISTS (SELECT 1 FROM suppressions WITH (UPDLOCK, HOLDLOCK) WHERE email_hash = $1)
+           INSERT INTO suppressions (email_hash, email, reason, source, note, created_by)
+           OUTPUT inserted.id INTO @out
+           VALUES ($1, $2, $3, $4, $5, $6);
+         SELECT id FROM @out;`,
+        [emailHash(email), email.toLowerCase(), reason, source, note, actorId],
       );
       return rows[0]?.id ?? null;
     },
 
     async find(db, id) {
-      const { rows } = await db.query('SELECT id, email, reason FROM suppressions WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await db.query('SELECT id, email, reason FROM suppressions WITH (UPDLOCK, ROWLOCK) WHERE id = $1', [id]);
       return rows[0] ?? null;
     },
 
@@ -51,29 +61,31 @@ export function createSuppressionsRepository() {
     // person in every area loses its personal data; events keep the contact
     // id (pseudonymous) and the email hash stays suppressed.
     async anonymize(db, email) {
+      const pseudonym = "CONCAT('anon-', LOWER(CONVERT(varchar(36), id)), '@anonimizado.invalid')";
       const { rows } = await db.query(
-        `UPDATE contacts SET email = 'anon-' || id || '@anonimizado.invalid', first_name = NULL, last_name = NULL,
-                attributes = '{}', anonymized_at = now()
-          WHERE email = $1 AND anonymized_at IS NULL
-          RETURNING id`,
+        `UPDATE contacts SET email = ${pseudonym}, first_name = NULL, last_name = NULL,
+                attributes = N'{}', anonymized_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME()
+         OUTPUT inserted.id
+          WHERE email = $1 AND anonymized_at IS NULL`,
         [email],
       );
-      // Campaign snapshots too (8.4): the message id and the events stay
-      // under the pseudonymous recipient id; nothing pending is sent.
+      // Campaign snapshots too: the message id and the events stay under the
+      // pseudonymous recipient id; nothing pending is sent.
       await db.query(
-        `UPDATE campaign_recipients SET email = 'anon-' || id || '@anonimizado.invalid', first_name = NULL, last_name = NULL,
-                attributes = '{}', status = CASE WHEN status = 'pending' THEN 'suppressed' ELSE status END
+        `UPDATE campaign_recipients SET email = ${pseudonym}, first_name = NULL, last_name = NULL,
+                attributes = N'{}', status = CASE WHEN status = 'pending' THEN 'suppressed' ELSE status END
           WHERE email = $1`,
         [email],
       );
-      const { rows: hash } = await db.query(
-        `INSERT INTO suppressions (email_hash, email, reason, source)
-         VALUES (${HASH}, NULL, 'anonymized', 'anonymization')
-         ON CONFLICT (email_hash) DO UPDATE SET email = NULL
-         RETURNING encode(email_hash, 'hex') AS email_hash`,
-        [email.toLowerCase()],
+      const hash = emailHash(email);
+      await db.query(
+        `IF EXISTS (SELECT 1 FROM suppressions WITH (UPDLOCK, HOLDLOCK) WHERE email_hash = $1)
+           UPDATE suppressions SET email = NULL WHERE email_hash = $1;
+         ELSE
+           INSERT INTO suppressions (email_hash, email, reason, source) VALUES ($1, NULL, 'anonymized', 'anonymization');`,
+        [hash],
       );
-      return { contacts: rows.length, emailHash: hash[0].email_hash };
+      return { contacts: rows.length, emailHash: hash.toString('hex') };
     },
   };
 }

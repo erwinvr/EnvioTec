@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, describe, it } from 'node:test';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
+import { emailHash } from '../../src/modules/suppressions/suppressions.repository.js';
 import { createHarness, multipart } from '../helpers/auth-fixtures.js';
 import { pdf } from '../helpers/pdf.js';
 
@@ -26,18 +27,18 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
   const ap = (...args) => as(approverToken)(...args);
 
   async function fixtures(areaId, { variables = ['first_name'], attributes = [], types = {} } = {}) {
-    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2) RETURNING id', [areaId, `${h.prefix}-t-${Math.random()}`]);
+    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [areaId, `${h.prefix}-t-${Math.random()}`]);
     await h.owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
-       VALUES ($1, 1, 'ready', gen_random_uuid(), 'p.docx', 10, repeat('a', 64), '<p>Hola {{first_name}}</p>', 'Hola', $2, $3)`,
+       VALUES ($1, 1, 'ready', NEWID(), 'p.docx', 10, REPLICATE('a', 64), '<p>Hola {{first_name}}</p>', 'Hola', $2, $3)`,
       [template[0].id, variables, operator.id],
     );
-    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name, attributes, attribute_types) VALUES ($1, $2, $3, $4) RETURNING id',
+    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name, attributes, attribute_types) OUTPUT inserted.id VALUES ($1, $2, $3, $4)',
       [areaId, `${h.prefix}-l-${Math.random()}`, attributes, types]);
     for (const email of ['uno@destino.test', 'dos@destino.test', `${h.prefix}.suprimido@destino.test`]) {
       await h.owner.query('INSERT INTO contacts (area_id, list_id, email, first_name) VALUES ($1, $2, $3, $4)', [areaId, list[0].id, email, 'X']);
     }
-    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [areaId, `${h.prefix}.${Math.random().toString(36).slice(2)}@envios.test`, 'Ventas']);
     return { templateId: template[0].id, listId: list[0].id, senderId: sender[0].id };
   }
@@ -75,8 +76,8 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
     approverToken = await h.session(approver.id);
     await h.owner.query('INSERT INTO quotas (user_id, assigned) VALUES ($1, 100)', [operator.id]);
     refs = await fixtures(h.areaId);
-    await h.owner.query("INSERT INTO suppressions (email_hash, email, reason, source) VALUES (sha256(convert_to($1, 'UTF8')), $1, 'hard_bounce', 'mandrill')",
-      [`${h.prefix}.suprimido@destino.test`]);
+    await h.owner.query("INSERT INTO suppressions (email_hash, email, reason, source) VALUES ($2, $1, 'hard_bounce', 'mandrill')",
+      [`${h.prefix}.suprimido@destino.test`, emailHash(`${h.prefix}.suprimido@destino.test`)]);
     otherArea = await h.area('otra');
   });
   after(async () => {
@@ -92,7 +93,7 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
     assert.equal((await op('POST', '/api/v1/campaigns', { name: 'Inyección', subject: 'Asunto\r\nBcc: a@b.c', ...refs })).statusCode, 422);
     const { rows } = await h.owner.query(
       `INSERT INTO campaigns (area_id, name, subject, template_version_id, list_id, sender_id, created_by)
-       SELECT $1, 'Ajena', 'S', tv.id, $3, $4, $5 FROM template_versions tv WHERE tv.template_id = $2 RETURNING id`,
+       OUTPUT inserted.id SELECT $1, 'Ajena', 'S', tv.id, $3, $4, $5 FROM template_versions tv WHERE tv.template_id = $2`,
       [otherArea, foreign.templateId, foreign.listId, foreign.senderId, operator.id],
     );
     assert.equal((await op('GET', `/api/v1/campaigns/${rows[0].id}`)).statusCode, 404);
@@ -149,7 +150,7 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
     assert.equal((await op('GET', `/api/v1/campaigns/${id}`)).json().data.template.version, 1);
     await h.owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
-       VALUES ($1, 2, 'ready', gen_random_uuid(), 'p2.docx', 10, repeat('b', 64), '<p>Hola v2 {{first_name}}</p>', 'Hola v2', '{first_name}', $2)`,
+       VALUES ($1, 2, 'ready', NEWID(), 'p2.docx', 10, REPLICATE('b', 64), '<p>Hola v2 {{first_name}}</p>', 'Hola v2', '["first_name"]', $2)`,
       [own.templateId, operator.id],
     );
     const submitted = await op('POST', `/api/v1/campaigns/${id}/submit`);
@@ -160,23 +161,23 @@ describe('campañas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/c
 
   it('una plantilla archivada impide enviar a aprobación el borrador que ya la usaba', async () => {
     const id = await readyCampaign();
-    await h.owner.query('UPDATE templates SET is_archived = true WHERE id = $1', [refs.templateId]);
+    await h.owner.query('UPDATE templates SET is_archived = 1 WHERE id = $1', [refs.templateId]);
     try {
       const res = await op('POST', `/api/v1/campaigns/${id}/submit`);
       assert.equal(res.statusCode, 422, res.body);
       assert.ok(res.json().error.details.some((d) => d.code === 'template_archived'));
     } finally {
-      await h.owner.query('UPDATE templates SET is_archived = false WHERE id = $1', [refs.templateId]);
+      await h.owner.query('UPDATE templates SET is_archived = 0 WHERE id = $1', [refs.templateId]);
     }
   });
 
   it('envío según fecha del contacto: foto con hora por destinatario y excluidos informados (ADR-030)', async () => {
     const own = await fixtures(h.areaId, { attributes: ['vence'], types: { vence: 'date' } });
     const laPaz = (days) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date(Date.now() + days * 86400000));
-    const setDate = (email, date) => h.owner.query("UPDATE contacts SET attributes = jsonb_build_object('vence', $2::text) WHERE list_id = $1 AND email = $3", [own.listId, date, email]);
+    const setDate = (email, date) => h.owner.query("UPDATE contacts SET attributes = JSON_OBJECT('vence': $2) WHERE list_id = $1 AND email = $3", [own.listId, date, email]);
     await setDate('uno@destino.test', laPaz(1));
     for (const [email, date] of [['pasado@destino.test', laPaz(-2)], ['lejos@destino.test', laPaz(400)]]) {
-      await h.owner.query("INSERT INTO contacts (area_id, list_id, email, attributes) VALUES ($1, $2, $3, jsonb_build_object('vence', $4::text))", [h.areaId, own.listId, email, date]);
+      await h.owner.query("INSERT INTO contacts (area_id, list_id, email, attributes) VALUES ($1, $2, $3, JSON_OBJECT('vence': $4))", [h.areaId, own.listId, email, date]);
     }
     const bad = await op('POST', '/api/v1/campaigns', { name: 'Mala', subject: 'S', ...own, scheduleByDate: { variable: 'nope' } });
     assert.equal(bad.json().error.details[0].code, 'invalid_schedule_variable');

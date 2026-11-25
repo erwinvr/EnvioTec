@@ -1,6 +1,4 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import pg from 'pg';
 import { pino } from 'pino';
 import { buildApp } from '../../src/app.js';
 import { hashPassword } from '../../src/core/auth/password.js';
@@ -10,6 +8,7 @@ import { loadConfig } from '../../src/core/config/index.js';
 import { createPool } from '../../src/core/db/pool.js';
 import { createRedisClient } from '../../src/core/redis/client.js';
 import { deriveCsrfToken } from '../../src/core/security/csrf.js';
+import { connectOwner } from './database.js';
 
 // multipart/form-data body with one file, as a browser sends it.
 export function multipart(filename, content, type = 'text/csv') {
@@ -23,7 +22,7 @@ export function multipart(filename, content, type = 'text/csv') {
 }
 
 // Shared setup for integration tests that log in through the API, against
-// the real PostgreSQL and Redis of the check environment.
+// the real SQL Server and Redis of the check environment.
 
 export const PASSWORD = 'Caballo-Bateria-Grapa-77';
 
@@ -52,15 +51,14 @@ export const nextIp = () => `10.77.${Math.floor(ipCounter / 250)}.${(ipCounter++
 export async function createHarness({ env = {}, mailer, adClientFactory, fileQueue, sendQueue } = {}) {
   const prefix = `t${randomBytes(4).toString('hex')}`;
   const config = loadConfig({ ...process.env, ...env });
-  const logger = pino({ level: 'silent' });
-  const owner = new pg.Client({ connectionString: readFileSync(process.env.MIGRATION_DATABASE_URL_FILE, 'utf8').trim() });
-  await owner.connect();
-  const pool = createPool(config.database, logger, 'enviotec-tests');
+  const logger = pino({ level: process.env.TEST_LOG_LEVEL ?? 'silent' });
+  const owner = await connectOwner();
+  const pool = await createPool(config.database, logger, 'enviotec-tests');
   const redis = createRedisClient(config.redis, logger);
   await redis.connect();
   const app = await buildApp({ config, logger, db: pool, redis, mailer, adClientFactory, fileQueue, sendQueue, checks: { database: async () => {} } });
   const passwordHash = await hashPassword(PASSWORD, config.argon2);
-  const { rows: area } = await owner.query('INSERT INTO areas (name, ad_department) VALUES ($1, $2) RETURNING id', [prefix, `${prefix}-dep`]);
+  const { rows: area } = await owner.query('INSERT INTO areas (name, ad_department) OUTPUT inserted.id VALUES ($1, $2)', [prefix, `${prefix}-dep`]);
   const roles = {};
   const areaId = area[0].id;
 
@@ -68,9 +66,12 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
     prefix, config, owner, pool, redis, app, areaId, roles,
 
     async role(name, permissionCodes) {
-      const { rows } = await owner.query('INSERT INTO roles (name) VALUES ($1) RETURNING id', [`${prefix}-${name}`]);
+      const { rows } = await owner.query(
+        'DECLARE @out TABLE (id uniqueidentifier); INSERT INTO roles (name) OUTPUT inserted.id INTO @out VALUES ($1); SELECT id FROM @out;',
+        [`${prefix}-${name}`],
+      );
       await owner.query(
-        'INSERT INTO role_permissions (role_id, permission_id) SELECT $1, id FROM permissions WHERE code = ANY($2::text[])',
+        'INSERT INTO role_permissions (role_id, permission_id) SELECT $1, id FROM permissions WHERE code IN (SELECT value FROM OPENJSON($2))',
         [rows[0].id, permissionCodes],
       );
       roles[name] = rows[0].id;
@@ -83,10 +84,13 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
       roles: roleIds = [], mustChangePassword = false, expiresInMinutes = 43200, mfa = false, area = areaId,
     } = {}) {
       const { rows } = await owner.query(
-        `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, must_change_password,
+        `DECLARE @out TABLE (id uniqueidentifier);
+         INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, must_change_password,
                             expires_at, mfa_secret_encrypted, mfa_enabled_at)
-         VALUES ($1, $2, $3, 'local', $4, $5, $6, now() + make_interval(mins => $7),
-                 CASE WHEN $8 THEN '\\x00'::bytea END, CASE WHEN $8 THEN now() END) RETURNING id`,
+         OUTPUT inserted.id INTO @out
+         VALUES ($1, $2, $3, 'local', $4, $5, $6, DATEADD(minute, $7, SYSUTCDATETIME()),
+                 CASE WHEN $8 = 1 THEN 0x00 END, CASE WHEN $8 = 1 THEN SYSUTCDATETIME() END);
+         SELECT id FROM @out;`,
         [`${prefix}.${name}`, `${prefix}.${name}@example.test`, `Usuario ${name}`, passwordHash, area,
           mustChangePassword, expiresInMinutes, mfa],
       );
@@ -96,8 +100,10 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
 
     async adUser(name, { guid, roles: roleIds = [] } = {}) {
       const { rows } = await owner.query(
-        `INSERT INTO users (username, email, display_name, auth_source, ad_object_guid, area_id)
-         VALUES ($1, $2, $3, 'ad', $4, $5) RETURNING id`,
+        `DECLARE @out TABLE (id uniqueidentifier);
+         INSERT INTO users (username, email, display_name, auth_source, ad_object_guid, area_id)
+         OUTPUT inserted.id INTO @out VALUES ($1, $2, $3, 'ad', $4, $5);
+         SELECT id FROM @out;`,
         [`${prefix}.${name}`, `${prefix}.${name}@example.test`, `Usuario ${name}`, guid ?? randomUUID(), areaId],
       );
       for (const roleId of roleIds) await owner.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [rows[0].id, roleId]);
@@ -109,14 +115,14 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
       const token = randomBytes(32).toString('base64url');
       await owner.query(
         `INSERT INTO sessions (id, user_id, expires_at, mfa_verified_at, reauth_at)
-         VALUES ($1, $2, now() + interval '8 hours', now(), CASE WHEN $3 THEN now() END)`,
+         VALUES ($1, $2, DATEADD(hour, 8, SYSUTCDATETIME()), SYSUTCDATETIME(), CASE WHEN $3 = 1 THEN SYSUTCDATETIME() END)`,
         [hashToken(token), userId, reauth],
       );
       return token;
     },
 
     async area(name) {
-      const { rows } = await owner.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [`${prefix}-${name}`]);
+      const { rows } = await owner.query('INSERT INTO areas (name) OUTPUT inserted.id VALUES ($1)', [`${prefix}-${name}`]);
       return rows[0].id;
     },
 
@@ -157,12 +163,12 @@ export async function createHarness({ env = {}, mailer, adClientFactory, fileQue
       // Audited users cannot be deleted (ON DELETE RESTRICT from audit_logs):
       // fixtures are soft-deleted and lose every session and role.
       await owner.query(
-        `UPDATE sessions SET revoked_at = now(), revoked_reason = 'test_cleanup'
+        `UPDATE sessions SET revoked_at = SYSUTCDATETIME(), revoked_reason = 'test_cleanup'
           WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE username LIKE $1)`,
         [`${prefix}.%`],
       );
       await owner.query('DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE username LIKE $1)', [`${prefix}.%`]);
-      await owner.query("UPDATE users SET deleted_at = now(), status = 'disabled' WHERE username LIKE $1", [`${prefix}.%`]);
+      await owner.query("UPDATE users SET deleted_at = SYSUTCDATETIME(), status = 'disabled' WHERE username LIKE $1", [`${prefix}.%`]);
       await owner.end();
     },
   };

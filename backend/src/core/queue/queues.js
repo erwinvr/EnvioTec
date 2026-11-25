@@ -2,7 +2,7 @@ import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 
 // BullMQ queues (ADR-003, ADR-022). Jobs carry only IDs and non-sensitive
-// parameters; business state lives in PostgreSQL. The version check is
+// parameters; business state lives in SQL Server. The version check is
 // skipped because it needs INFO, which the Redis ACL denies to every service.
 //   files          backend -> file-processor: inspect an uploaded file
 //   files-results  file-processor -> worker: outcome of the inspection

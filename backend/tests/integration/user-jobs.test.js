@@ -35,8 +35,11 @@ describe('trabajos del worker: cuentas locales y revisión de AD', { skip: !enab
     dir = createDirectory();
     h = await createHarness({ env: AD_ENV, adClientFactory: dir.factory });
     operatorRole = await h.role('operador', ['campaigns.view']);
-    await h.owner.query('INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2) ON CONFLICT (group_dn) DO UPDATE SET role_id = $2',
-      [OPERATORS, operatorRole]);
+    await h.owner.query(
+      `IF EXISTS (SELECT 1 FROM ad_group_role_mappings WHERE group_dn = $1) UPDATE ad_group_role_mappings SET role_id = $2 WHERE group_dn = $1;
+       ELSE INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2);`,
+      [OPERATORS, operatorRole],
+    );
   });
   after(async () => {
     await h?.owner.query('DELETE FROM ad_group_role_mappings WHERE group_dn = $1', [OPERATORS]);
@@ -46,14 +49,14 @@ describe('trabajos del worker: cuentas locales y revisión de AD', { skip: !enab
   it('vigencia: desactiva vencidas e inactivas, revoca sesiones y respeta renovadas y la cuenta de emergencia', async () => {
     const expired = await h.localUser('vencida');
     const session = await h.login(expired.username);
-    await h.owner.query("UPDATE users SET expires_at = now() - interval '1 minute' WHERE id = $1", [expired.id]);
+    await h.owner.query("UPDATE users SET expires_at = DATEADD(minute, -1, SYSUTCDATETIME()) WHERE id = $1", [expired.id]);
     const inactive = await h.localUser('inactiva');
-    await h.owner.query("UPDATE users SET created_at = now() - interval '60 days', last_login_at = now() - interval '50 days' WHERE id = $1", [inactive.id]);
+    await h.owner.query("UPDATE users SET created_at = DATEADD(day, -60, SYSUTCDATETIME()), last_login_at = DATEADD(day, -50, SYSUTCDATETIME()) WHERE id = $1", [inactive.id]);
     const renewed = await h.localUser('renovada');
-    await h.owner.query("UPDATE users SET created_at = now() - interval '60 days', last_login_at = now() - interval '50 days', activity_reset_at = now() WHERE id = $1", [renewed.id]);
+    await h.owner.query("UPDATE users SET created_at = DATEADD(day, -60, SYSUTCDATETIME()), last_login_at = DATEADD(day, -50, SYSUTCDATETIME()), activity_reset_at = SYSUTCDATETIME() WHERE id = $1", [renewed.id]);
     const emergency = await h.localUser('emergencia');
     await h.owner.query(
-      "UPDATE users SET is_emergency = true, exempt_from_expiry = true, expires_at = NULL, created_at = now() - interval '200 days' WHERE id = $1",
+      "UPDATE users SET is_emergency = 1, exempt_from_expiry = 1, expires_at = NULL, created_at = DATEADD(day, -200, SYSUTCDATETIME()) WHERE id = $1",
       [emergency.id],
     );
 
@@ -69,8 +72,8 @@ describe('trabajos del worker: cuentas locales y revisión de AD', { skip: !enab
 
   it('vigencia: avisa una sola vez a la cuenta y a los administradores antes del vencimiento', async () => {
     const soon = await h.localUser('por-vencer', { expiresInMinutes: 3 * 24 * 60 });
-    const { rows: setting } = await h.owner.query("SELECT value FROM system_settings WHERE key = 'notifications.admin_emails'");
-    await h.owner.query("UPDATE system_settings SET value = '[\"ti@empresa.test\"]' WHERE key = 'notifications.admin_emails'");
+    const { rows: setting } = await h.owner.query("SELECT value FROM system_settings WHERE [key] = 'notifications.admin_emails'");
+    await h.owner.query("UPDATE system_settings SET value = '[\"ti@empresa.test\"]' WHERE [key] = 'notifications.admin_emails'");
     try {
       mailer.sent.length = 0;
       await validityJob()();
@@ -81,7 +84,7 @@ describe('trabajos del worker: cuentas locales y revisión de AD', { skip: !enab
       assert.equal(mailer.sent.filter((m) => m.text.includes(soon.username)).length, 0, 'no repite el aviso');
       assert.equal((await h.audits('user.expiry_warning', soon.id)).length, 1);
     } finally {
-      await h.owner.query("UPDATE system_settings SET value = $1 WHERE key = 'notifications.admin_emails'", [JSON.stringify(setting[0].value)]);
+      await h.owner.query("UPDATE system_settings SET value = $1 WHERE [key] = 'notifications.admin_emails'", [JSON.stringify(setting[0].value)]);
     }
   });
 

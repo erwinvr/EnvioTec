@@ -9,10 +9,6 @@ FROM base AS prod-deps
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-FROM base AS database-deps
-COPY database/package.json database/package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-
 # Development and tests: includes devDependencies and the test suite.
 FROM base AS dev
 # qpdf for the PDF inspection tests (ADR-004).
@@ -26,15 +22,15 @@ RUN mkdir -p /data/files && chown node:node /data/files
 USER node
 CMD ["node", "src/server.js"]
 
-# Migrations, seeds and bootstrap (ADR-017). Never deployed as a service.
-# No npm either: the scripts run with node directly.
+# Provisioning, migrations, seeds and bootstrap (ADR-017, ADR-032). Never
+# deployed as a service. No npm either: the scripts run with node directly,
+# with the backend's database adapter and driver.
 FROM base AS tools
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=prod-deps /app/node_modules ./backend/node_modules
 COPY backend/package.json ./backend/
 COPY backend/src ./backend/src
-COPY --from=database-deps /app/node_modules ./database/node_modules
 COPY database/package.json ./database/
 COPY database/migrations ./database/migrations
 COPY database/seeds ./database/seeds

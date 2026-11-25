@@ -1,27 +1,15 @@
 // Usage: node scripts/migrate.js <up | down [count|all] | verify>
 //   up      applies every pending migration
 //   down    reverts the last migration (or <count>, or all)
-//   verify  reverts all, then applies all (A11.8: migrations apply and revert)
+//   verify  applies all, reverts all, then applies all again (A11.8)
 import { fileURLToPath } from 'node:url';
-import { runner } from 'node-pg-migrate';
-import { loadToolsConfig } from './lib/connection.js';
+import { migrate } from './lib/migrator.js';
+import { loadToolsConfig, withOwnerDatabase } from './lib/connection.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
 
 const config = loadToolsConfig();
 const [command, countArg] = process.argv.slice(2);
-
-function run(direction, count) {
-  return runner({
-    databaseUrl: config.migrationDatabaseUrl,
-    dir: MIGRATIONS_DIR,
-    migrationsTable: 'pgmigrations',
-    direction,
-    count,
-    checkOrder: true,
-    log: (message) => console.log(message),
-  });
-}
 
 function parseCount(value) {
   if (value === undefined) return 1;
@@ -34,20 +22,24 @@ function parseCount(value) {
   return count;
 }
 
-switch (command) {
-  case 'up':
-    await run('up', Infinity);
-    break;
-  case 'down':
-    await run('down', parseCount(countArg));
-    break;
-  case 'verify':
-    await run('up', Infinity);
-    await run('down', Infinity);
-    await run('up', Infinity);
+const COMMANDS = {
+  up: (db) => migrate(db, MIGRATIONS_DIR, { direction: 'up' }),
+  down: (db) => migrate(db, MIGRATIONS_DIR, { direction: 'down', count: parseCount(countArg) }),
+  verify: async (db) => {
+    await migrate(db, MIGRATIONS_DIR, { direction: 'up' });
+    await migrate(db, MIGRATIONS_DIR, { direction: 'down' , count: Infinity });
+    await migrate(db, MIGRATIONS_DIR, { direction: 'up' });
     console.log('Las migraciones aplican y revierten correctamente.');
-    break;
-  default:
-    console.error('Uso: node scripts/migrate.js <up | down [count|all] | verify>');
-    process.exit(1);
+  },
+};
+
+if (!COMMANDS[command]) {
+  console.error('Uso: node scripts/migrate.js <up | down [count|all] | verify>');
+  process.exit(1);
+}
+try {
+  await withOwnerDatabase(config, COMMANDS[command]);
+} catch (error) {
+  console.error(`Error en las migraciones: ${error.message}`);
+  process.exit(1);
 }

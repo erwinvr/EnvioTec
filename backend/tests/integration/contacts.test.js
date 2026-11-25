@@ -10,6 +10,7 @@ import { createFileStore } from '../../src/core/files/storage.js';
 import { createQueue, QUEUES } from '../../src/core/queue/queues.js';
 import { createContactsRepository } from '../../src/modules/contacts/contacts.repository.js';
 import { createImportExpiryJob } from '../../src/modules/contacts/jobs/import-results.job.js';
+import { emailHash } from '../../src/modules/suppressions/suppressions.repository.js';
 import { createHarness, multipart } from '../helpers/auth-fixtures.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
@@ -73,7 +74,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     const reserved = await call('POST', '/api/v1/lists', { name: 'Mala', attributes: ['email'] });
     assert.equal(reserved.json().error.details[0].code, 'reserved_variable', 'nombre reservado');
     assert.equal((await call('POST', '/api/v1/lists', { name: 'Ajena', areaId: otherArea })).json().error.details[0].code, 'invalid_area');
-    const { rows } = await h.owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-ajena`]);
+    const { rows } = await h.owner.query('INSERT INTO contact_lists (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [otherArea, `${h.prefix}-ajena`]);
     assert.equal((await call('GET', `/api/v1/lists/${rows[0].id}`)).statusCode, 404);
     assert.equal((await call('GET', `/api/v1/lists/${rows[0].id}/contacts`)).statusCode, 404);
     assert.ok(!(await call('GET', '/api/v1/lists')).json().data.some((l) => l.id === rows[0].id));
@@ -165,7 +166,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     assert.equal((await call('POST', `/api/v1/imports/${toCancel.id}/mapping`, { mapping: ['email'] })).statusCode, 409);
 
     const stale = await waitImport((await h.request('POST', `/api/v1/lists/${list.id}/imports`, { token: operator, ...multipart('s.csv', 'email\na@b.test\n') })).json().data.id);
-    await h.owner.query("UPDATE contact_imports SET created_at = now() - interval '25 hours' WHERE id = $1", [stale.id]);
+    await h.owner.query("UPDATE contact_imports SET created_at = DATEADD(hour, -25, SYSUTCDATETIME()) WHERE id = $1", [stale.id]);
     const job = createImportExpiryJob({ pool: h.pool, repository: createContactsRepository(), store: createFileStore(process.env.FILES_DIR ?? '/data/files'), audit: createAuditService(), logger: { warn() {} } });
     assert.ok((await job()).expired >= 1);
     assert.equal((await call('GET', `/api/v1/imports/${stale.id}`)).json().data.failureReason, 'mapping_expired');
@@ -192,8 +193,8 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     const plain = (await call('GET', `/api/v1/suppressions?search=${encodeURIComponent(email)}`, undefined, adminToken)).json().data[0];
     assert.equal(plain.email, email);
     const { rows } = await h.owner.query(
-      "INSERT INTO suppressions (email_hash, email, reason, source) VALUES (sha256(convert_to($1, 'UTF8')), $1, 'hard_bounce', 'mandrill') RETURNING id",
-      [`${h.prefix}.rebote@empresa.test`],
+      "DECLARE @out TABLE (id uniqueidentifier); INSERT INTO suppressions (email_hash, email, reason, source) OUTPUT inserted.id INTO @out VALUES ($2, $1, 'hard_bounce', 'mandrill'); SELECT id FROM @out;",
+      [`${h.prefix}.rebote@empresa.test`, emailHash(`${h.prefix}.rebote@empresa.test`)],
     );
     assert.equal((await call('DELETE', `/api/v1/suppressions/${rows[0].id}`, undefined, adminToken)).statusCode, 409);
     await assert.rejects(h.owner.query('DELETE FROM suppressions WHERE id = $1', [rows[0].id]), /only manual/);
@@ -204,7 +205,7 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     const email = `${h.prefix}.olvido@empresa.test`;
     const list = (await call('POST', '/api/v1/lists', { name: 'Olvido', attributes: ['ciudad'] })).json().data;
     const contact = (await call('POST', `/api/v1/lists/${list.id}/contacts`, { email, firstName: 'Olga', attributes: { ciudad: 'Tarija' } })).json().data;
-    const { rows: otherList } = await h.owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-olvido`]);
+    const { rows: otherList } = await h.owner.query('INSERT INTO contact_lists (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [otherArea, `${h.prefix}-olvido`]);
     await h.owner.query("INSERT INTO contacts (area_id, list_id, email) VALUES ($1, $2, $3)", [otherArea, otherList[0].id, email.toUpperCase()]);
     const noReauth = await h.session((await h.owner.query('SELECT user_id FROM user_roles WHERE role_id = $1', [h.roles.admin])).rows[0].user_id, { reauth: false });
     assert.equal((await call('POST', '/api/v1/suppressions/anonymize', { email }, noReauth)).json().error.code, 'REAUTH_REQUIRED');
@@ -214,9 +215,9 @@ describe('contactos, importación y supresión', { skip: !enabled && 'requiere R
     assert.match(rows[0].email, /^anon-.+@anonimizado\.invalid$/);
     assert.equal(rows[0].first_name, null);
     assert.deepEqual(rows[0].attributes, {});
-    const suppression = await h.owner.query("SELECT email, reason FROM suppressions WHERE email_hash = sha256(convert_to($1, 'UTF8'))", [email]);
+    const suppression = await h.owner.query('SELECT email, reason FROM suppressions WHERE email_hash = $1', [emailHash(email)]);
     assert.deepEqual(suppression.rows[0], { email: null, reason: 'anonymized' });
-    const { rows: audit } = await h.owner.query("SELECT metadata FROM audit_logs WHERE action = 'contact.anonymize' ORDER BY seq DESC LIMIT 1");
+    const { rows: audit } = await h.owner.query("SELECT TOP (1) metadata FROM audit_logs WHERE action = 'contact.anonymize' ORDER BY seq DESC");
     assert.ok(!JSON.stringify(audit[0]).includes(email), 'la auditoría guarda el hash, no el email');
   });
 });

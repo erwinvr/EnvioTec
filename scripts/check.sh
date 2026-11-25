@@ -25,6 +25,8 @@ export NGINX_IP=172.31.110.10
 # The browser check opens the app at https://nginx:8443, so that is the
 # origin the backend accepts in this environment (CSRF Origin check).
 export APP_ORIGIN=https://nginx:8443
+# The check SQL Server, whose certificate the check CA signed for this name.
+export DATABASE_SERVER_NAME=sqlserver
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.check.yml)
 
 cleanup() {
@@ -46,17 +48,23 @@ npm run lint
 npm run test:frontend
 
 step "3/12 Secretos efímeros para el entorno de verificación"
-bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force
+DB_HOST=sqlserver DB_NAME=enviotec bash scripts/generate-dev-secrets.sh "$SECRETS_DIR" --force --with-sqlserver
 
-step "4/12 Construcción de imágenes y arranque del stack"
+step "4/12 Construcción de imágenes, SQL Server y aprovisionamiento de la base"
 "${COMPOSE[@]}" --profile check build
+# nginx upgrades its Alpine packages at build time (the base image lags
+# behind security fixes): without the cache, so each run gets today's fixes.
+"${COMPOSE[@]}" build --no-cache nginx
 docker volume create enviotec-clamav-db >/dev/null
-# The first run downloads the ClamAV signatures through the egress proxy.
-"${COMPOSE[@]}" up -d --wait --wait-timeout 900 nginx backend worker postgres redis egress-proxy clamav file-processor
+"${COMPOSE[@]}" up -d --wait --wait-timeout 300 sqlserver redis
+# The database and its least-privilege logins, as in each environment.
+"${COMPOSE[@]}" --profile check run --rm tools node scripts/provision.js
 
-step "5/12 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía"
+step "5/12 Migraciones: aplicar, revertir todo y volver a aplicar sobre una base vacía; arranque del stack"
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/migrate.js verify
 "${COMPOSE[@]}" --profile check run --rm tools node scripts/seed.js system
+# The first run downloads the ClamAV signatures through the egress proxy.
+"${COMPOSE[@]}" up -d --wait --wait-timeout 900 nginx backend worker redis egress-proxy clamav file-processor
 
 step "6/12 Tests de base de datos (privilegios, triggers, seeds, bootstrap)"
 "${COMPOSE[@]}" --profile check run --rm tools node --test --test-concurrency=1 "tests/**/*.test.js"

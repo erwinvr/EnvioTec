@@ -60,7 +60,7 @@ El mapeo a requisitos individuales se agrega en la revisión de seguridad de cad
 | --- | --- |
 | TB1 | Navegador ↔ Nginx (HTTPS, certificado de la CA interna) |
 | TB2 | Nginx ↔ backend (red `edge`) |
-| TB3 | Backend y worker ↔ PostgreSQL y Redis (red `data`) |
+| TB3 | Backend y worker ↔ Redis (red `data`) y ↔ SQL Server de la organización (red `database`, TLS, fuera del stack; ADR-032) |
 | TB4 | Worker ↔ procesador de archivos y ClamAV (red `files`, interna; contenido no confiable) |
 | TB5 | Worker y backend ↔ Mandrill (internet, por el proxy de egreso) |
 | TB6 | Backend y worker ↔ controlador de dominio (LDAPS) |
@@ -68,7 +68,7 @@ El mapeo a requisitos individuales se agrega en la revisión de seguridad de cad
 | TB8 | Host ↔ Docker secrets |
 
 ```text
-Navegador ──TB1──▶ Nginx ──TB2──▶ Backend ──TB3──▶ PostgreSQL / Redis
+Navegador ──TB1──▶ Nginx ──TB2──▶ Backend ──TB3──▶ SQL Server / Redis
                                     │  ▲
                                     │  └──TB3── Worker ──TB4──▶ file-processor, ClamAV
                                     │             │
@@ -156,6 +156,9 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 | R15 | Compatibilidad del proveedor LDAPS con el AD real (TLS con la CA interna, atributos, grupos anidados): Samba AD no se puede provisionar en el host de desarrollo | Directorio simulado en los tests (ADR-019); validación con el AD de la organización cuando estén sus datos | Abierto (Fase 3) |
 | R16 | Recuperación por correo sin API key de sistema de Mandrill: el correo queda deshabilitado y se registra una advertencia | Configurar `MANDRILL_SYSTEM_API_KEY` y `MAIL_FROM` del subdominio verificado; probar en el spike 0.5 | Abierto (Fase 3) |
 | R17 | Red hacia el controlador de dominio en producción: las redes del backend son internas | Red dedicada con firewall solo hacia el controlador de dominio (puerto 636): `docs/runbook.md`, sección 8 | Documentado; se aplica al desplegar |
+| R18 | SQL Server de la organización en versión RTM (16.0.1000.6, octubre de 2022), sin actualizaciones acumulativas ni de seguridad | Instalar la última CU o GDR de SQL Server 2022 antes de producción (equipo de base de datos) | Abierto (2026-11-24) |
+| R19 | El certificado TLS de SQL Server es el autogenerado (`SSL_Self_Signed_Fallback`, cambia en cada reinicio): el cifrado no autentica al servidor | Certificado de la CA interna con el nombre del servidor. Producción no arranca sin `DATABASE_CA_CERT` y rechaza `DATABASE_TRUST_SERVER_CERTIFICATE`; desarrollo acepta el autofirmado | Abierto; control en el código (2026-11-24) |
+| R20 | La credencial `sa` del servidor, con una clave débil, se compartió por chat | Rotar la clave de `sa` o deshabilitarlo; aprovisionar con un login administrativo nominal. EnvioTec nunca usa `sa` en ejecución: la credencial solo está en `secrets/database_admin_url` (ignorado por Git) para `npm run db:provision` | Abierto (2026-11-24) |
 
 ## 7. Revisión de seguridad por fase
 
@@ -222,7 +225,7 @@ Decisiones del negocio que dejan un riesgo residual. Cada una tiene su ADR.
 - Los tests de base de datos y la matriz usan las credenciales de `app_owner` dentro del entorno de verificación (para crear fixtures y probar que los triggers resisten incluso al dueño). Esas credenciales solo existen en `.check-secrets/`, que se genera y se borra en cada ejecución.
 - `app_owner` puede desactivar triggers (`ALTER TABLE … DISABLE TRIGGER`) por ser dueño de las tablas. Se acepta: solo lo usan las migraciones, y la cadena de hash de la Fase 4 detecta cualquier alteración posterior.
 - Trivy encontró 6 vulnerabilidades altas (`brace-expansion`, `undici`) en el npm que trae la imagen base de Node, dentro de la imagen `tools`. Se eliminó npm de `tools` (como ya se hacía en `runtime`) y los scripts se ejecutan con `node`.
-- `npm audit` informa avisos moderados sin corrección compatible: `minimatch` (dependencia de ESLint, solo desarrollo) y `glob` (dependencia de `node-pg-migrate`, que solo lista el directorio fijo de migraciones, sin entrada del usuario). No llegan al umbral alto de A11; se revisan en la Fase 9.
+- `npm audit` informa avisos moderados sin corrección compatible: `minimatch` (dependencia de ESLint, solo desarrollo) y `glob` (dependencia de `node-pg-migrate`, que solo lista el directorio fijo de migraciones, sin entrada del usuario; `node-pg-migrate` se retiró con ADR-032). No llegan al umbral alto de A11; se revisan en la Fase 9.
 
 ### Fase 3 — Autenticación (2026-10-31)
 
@@ -547,3 +550,19 @@ Informe completo, con la revisión por capítulo de ASVS 5.0 nivel 2 y la tabla 
 | Datos personales | El resumen devuelve solo agregados, sin correos, IP ni ubicación | Schema de salida de la ruta |
 | Parte B (apertura aproximada) | La aclaración sigue junto a los indicadores, y "Proxy" se separa y se explica en la dona | Revisión de la pantalla |
 | A6 (el frontend no es un control) | El menú lateral solo oculta entradas; el backend sigue autorizando cada request | `authorization-matrix.test.js` |
+
+### Migración a SQL Server (2026-11-24, ADR-032)
+
+| Amenaza o requisito | Control | Verificación |
+| --- | --- | --- |
+| A8 / inyección SQL | Todos los valores viajan como parámetros tipados (`$n` → `@pn` en el adaptador); identificadores solo de allowlists; el aprovisionamiento escapa los nombres con `QUOTENAME` y las claves dentro de T-SQL, nunca en JavaScript | `unit/db-adapter.test.js`, tests de integración |
+| A4 (mínimo privilegio) | Login de ejecución solo en el rol `app_runtime` con permisos tabla por tabla y por columna; login dueño solo de la base; el login administrativo solo aprovisiona | `database/tests/runtime-privileges.test.js`, `integration/health.test.js` |
+| A7 (auditoría append-only) | Solo `EXECUTE append_audit_log` y `SELECT`; trigger `INSTEAD OF UPDATE, DELETE`; cadena de hashes en la base bajo un bloqueo de aplicación | `database/tests/constraints.test.js`, `runtime-privileges.test.js`, `audit-verify.test.js`, `audit-verify.js` en el check |
+| ADR-007 (roles administrativos solo locales) | Triggers de guarda por sentencia con `THROW` | `constraints.test.js` |
+| Supresión global | `email_hash` calculado por la base (SHA-256 del email en minúsculas, UTF-8), idéntico al de Node, más un CHECK que lo ata a la dirección guardada | `constraints.test.js`, `integration/sending.test.js`, `contacts.test.js` |
+| V12 / TLS hacia la base (R19) | TLS siempre; en producción, el certificado se valida contra la CA interna por nombre; la configuración rechaza aceptar un certificado autofirmado en producción | `unit/config.test.js`; el check valida el certificado de su SQL Server contra una CA efímera |
+| Concurrencia (cuotas, tope global, idempotencia) | `UPDLOCK`/`HOLDLOCK` en lugar de `FOR UPDATE`/`ON CONFLICT`; `sp_getapplock` en lugar de bloqueos consultivos; read committed snapshot | `integration/senders-quotas.test.js`, `sending.test.js`, `campaigns.test.js` |
+| Segmentación de red | Red `database` con salida, limitada por firewall al servidor y al puerto 1433 (`docs/deployment.md`, sección 3.5) | Revisión del despliegue |
+
+Pendientes: R18 (actualizar SQL Server), R19 (certificado de la CA interna) y R20 (rotar o deshabilitar `sa`).
+

@@ -21,7 +21,7 @@
 
 **Informe de hardening (fase 9)** en formato tabla: Hallazgo · Requisito ASVS · Severidad · Impacto · Archivo · Corrección · Estado.
 
-**Documentación entregable al cierre:** README (descripción, arquitectura, requisitos, instalación, variables de entorno, ejecución local y con Docker, migraciones, seeds, tests, estructura), especificación OpenAPI de todos los endpoints, `security.md` con el modelo de amenazas y los controles, ADRs y un runbook de operación (despliegue, respaldo y restauración de PostgreSQL, rotación de secretos, revocación masiva de sesiones).
+**Documentación entregable al cierre:** README (descripción, arquitectura, requisitos, instalación, variables de entorno, ejecución local y con Docker, migraciones, seeds, tests, estructura), especificación OpenAPI de todos los endpoints, `security.md` con el modelo de amenazas y los controles, ADRs y un runbook de operación (despliegue, respaldo y restauración de la base de datos, rotación de secretos, revocación masiva de sesiones).
 
 ## C3. Primera respuesta (Fase 0)
 

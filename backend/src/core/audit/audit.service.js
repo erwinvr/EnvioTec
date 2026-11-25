@@ -1,3 +1,5 @@
+import { binary } from '../db/pool.js';
+
 // Audit service (A7). Every event goes through append_audit_log(), which
 // chains it to the previous one by hash inside the database. Pass the
 // transaction client when the action modifies data, so that the action fails
@@ -13,11 +15,14 @@ export function createAuditService() {
       const actor = event.actor ?? {};
       const actorType = actor.userId ? 'user' : (actor.type ?? 'anonymous');
       await db.query(
-        'SELECT append_audit_log($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+        `DECLARE @id uniqueidentifier;
+         EXEC dbo.append_audit_log @actor_type = $1, @actor_user_id = $2, @actor_session_id = $3, @action = $4,
+              @resource_type = $5, @resource_id = $6, @result = $7, @ip = $8, @user_agent = $9, @request_id = $10,
+              @metadata = $11, @id = @id OUTPUT`,
         [
           actorType,
           actor.userId ?? null,
-          actor.sessionHash ?? null,
+          binary(actor.sessionHash),
           event.action,
           event.resourceType ?? null,
           event.resourceId === undefined || event.resourceId === null ? null : String(event.resourceId),

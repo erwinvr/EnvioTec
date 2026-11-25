@@ -7,8 +7,15 @@ export const PROPERTIES = {
   NODE_ENV: { type: 'string', enum: ['development', 'test', 'production'] },
   PORT: { type: 'integer', minimum: 1, maximum: 65535, default: 3000 },
   LOG_LEVEL: { type: 'string', enum: LOG_LEVELS },
-  DATABASE_URL: { type: 'string', pattern: '^postgres(ql)?://.+' },
-  MIGRATION_DATABASE_URL: { type: 'string', pattern: '^postgres(ql)?://.+' },
+  // sqlserver://user:password@host[:port]/database (ADR-032).
+  DATABASE_URL: { type: 'string', pattern: '^sqlserver://.+' },
+  MIGRATION_DATABASE_URL: { type: 'string', pattern: '^sqlserver://.+' },
+  // TLS to SQL Server: the CA that signed the server certificate (PEM), the
+  // name in that certificate when connecting by IP, and, outside production
+  // only, the option to accept the server's self-signed certificate.
+  DATABASE_CA_CERT: { type: 'string', pattern: '-----BEGIN CERTIFICATE-----' },
+  DATABASE_SERVER_NAME: { type: 'string', pattern: '^[A-Za-z0-9.-]{1,253}$' },
+  DATABASE_TRUST_SERVER_CERTIFICATE: { type: 'boolean', default: false },
   DATABASE_POOL_MAX: { type: 'integer', minimum: 1, maximum: 100, default: 10 },
   DATABASE_STATEMENT_TIMEOUT_MS: { type: 'integer', minimum: 100, maximum: 600000, default: 10000 },
   REDIS_URL: { type: 'string', pattern: '^rediss?://.+' },
@@ -56,9 +63,11 @@ export const PROPERTIES = {
 export const LDAP_KEYS = ['LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
   'LDAP_ALLOWED_GROUP_DN'];
 
+const DATABASE_TLS_KEYS = ['DATABASE_CA_CERT', 'DATABASE_SERVER_NAME', 'DATABASE_TRUST_SERVER_CERTIFICATE'];
+
 // Variables that may come from a Docker secret file (<NAME>_FILE).
 export const SECRET_KEYS = new Set([
-  'DATABASE_URL', 'MIGRATION_DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY',
+  'DATABASE_URL', 'MIGRATION_DATABASE_URL', 'DATABASE_CA_CERT', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY',
   'LDAP_BIND_PASSWORD', 'LDAP_CA_CERT', 'MANDRILL_SYSTEM_API_KEY', 'MANDRILL_CAMPAIGNS_API_KEY',
 ]);
 
@@ -67,7 +76,7 @@ export const PROFILES = {
   api: {
     required: ['NODE_ENV', 'DATABASE_URL', 'REDIS_URL', 'CSRF_SECRET', 'DATA_ENCRYPTION_KEY', 'TRUST_PROXY', 'APP_ORIGIN'],
     optional: [
-      'PORT', 'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS',
+      'PORT', 'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS', ...DATABASE_TLS_KEYS, ...DATABASE_TLS_KEYS,
       'SESSION_IDLE_TIMEOUT_MIN', 'SESSION_ABSOLUTE_TIMEOUT_MIN',
       'ARGON2_MEMORY_KIB', 'ARGON2_ITERATIONS', 'ARGON2_PARALLELISM',
       'RATE_LIMIT_LOGIN_PER_IP', 'RATE_LIMIT_LOGIN_PER_ACCOUNT',
@@ -81,7 +90,7 @@ export const PROFILES = {
   worker: {
     required: ['NODE_ENV', 'DATABASE_URL', 'REDIS_URL'],
     optional: [
-      'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS',
+      'LOG_LEVEL', 'DATABASE_POOL_MAX', 'DATABASE_STATEMENT_TIMEOUT_MS', ...DATABASE_TLS_KEYS,
       'AD_ENABLED', 'LDAP_URL', 'LDAP_CA_CERT', 'LDAP_BIND_DN', 'LDAP_BIND_PASSWORD', 'LDAP_BASE_DN',
       'LDAP_ALLOWED_GROUP_DN', 'LDAP_TIMEOUT_MS', 'MANDRILL_SYSTEM_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME', 'FILES_DIR',
       'MANDRILL_CAMPAIGNS_API_KEY', 'MANDRILL_API_URL', 'SENDING_BATCH_SIZE',
@@ -95,6 +104,6 @@ export const PROFILES = {
   // Migrations, seeds and bootstrap (database/scripts), with the app_owner user.
   tools: {
     required: ['NODE_ENV', 'MIGRATION_DATABASE_URL'],
-    optional: ['LOG_LEVEL', 'ARGON2_MEMORY_KIB', 'ARGON2_ITERATIONS', 'ARGON2_PARALLELISM'],
+    optional: ['LOG_LEVEL', 'ARGON2_MEMORY_KIB', 'ARGON2_ITERATIONS', 'ARGON2_PARALLELISM', ...DATABASE_TLS_KEYS],
   },
 };

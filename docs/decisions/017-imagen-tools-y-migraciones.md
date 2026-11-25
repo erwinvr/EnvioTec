@@ -1,6 +1,6 @@
 # ADR-017: Imagen `tools` para migraciones, seeds y bootstrap
 
-- **Estado:** Aceptado (2026-10-31)
+- **Estado:** Aceptado (2026-10-31). **Reemplazado en parte por [ADR-032](032-sql-server.md)** (2026-11-24): la base es SQL Server
 - **Fecha:** 2026-10-31
 
 ## Contexto

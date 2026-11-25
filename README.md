@@ -21,11 +21,11 @@ Plataforma interna para enviar campañas de correo masivo con un PDF adjunto, a 
 ## Arquitectura
 
 ```text
-Navegador ──HTTPS──▶ nginx ──▶ backend (Fastify) ──▶ PostgreSQL 18
+Navegador ──HTTPS──▶ nginx ──▶ backend (Fastify) ──TLS──▶ SQL Server 2022 (servidor de la organización)
                        │            │           └──▶ Redis 8
                        │            └──▶ egress-proxy (Squid) ──▶ mandrillapp.com
                        └── frontend estático (JS Vanilla, ES Modules)
-worker ──▶ PostgreSQL, Redis, egress-proxy
+worker ──▶ SQL Server, Redis, egress-proxy
 ```
 
 - **nginx:** TLS, frontend en `/`, `/api/*` y `/health/*` al backend, headers de seguridad (ADR-001).
@@ -34,7 +34,8 @@ worker ──▶ PostgreSQL, Redis, egress-proxy
 - **clamav:** antivirus; actualiza firmas a través del proxy de egreso.
 - **worker:** trabajos periódicos (ADR-020): particiones mensuales, control horario de vigencia de cuentas locales y revisión de AD cada 15 minutos; las colas de envío llegan en la Fase 8.
 - **egress-proxy:** única salida a internet, con allowlist de dominios (ADR-009, ADR-015).
-- Redes Docker `edge`, `data` y `egress` internas (sin internet); PostgreSQL y Redis sin puertos publicados en producción.
+- Redes Docker `edge`, `data` y `egress` internas (sin internet); Redis sin puertos publicados en producción.
+- **Base de datos:** el SQL Server de la organización, fuera del stack (ADR-032). Se llega por la red `database`, que el firewall limita al servidor y al puerto 1433, con TLS y dos logins de mínimo privilegio: dueño (migraciones) y ejecución (la aplicación).
 - Todos los contenedores corren sin root, con sistema de archivos de solo lectura, `cap_drop: ALL`, `no-new-privileges`, healthcheck y límites de CPU y memoria.
 
 ## Requisitos
@@ -46,16 +47,19 @@ worker ──▶ PostgreSQL, Redis, egress-proxy
 ## Puesta en marcha (desarrollo)
 
 ```bash
-npm ci                         # herramientas de lint
-npm run secrets:dev            # genera ./secrets (aleatorios) y un certificado autofirmado
+npm ci                                                  # herramientas de lint
+DB_HOST=<servidor> npm run secrets:dev                  # ./secrets aleatorios, URLs de la base y certificado autofirmado
+# secrets/database_admin_url: sqlserver://<login administrativo>:<clave>@<servidor>:1433/master (lo escribe quien administra la base)
+npm run db:provision                                    # crea la base enviotec y sus logins (una vez)
+docker compose run --rm tools node scripts/migrate.js up
 docker compose up -d --build --wait
 curl --cacert secrets/tls_cert https://localhost/health/ready
 ```
 
-Base de datos (la primera vez y después de cada cambio de migraciones):
+El manual completo está en [docs/deployment.md](docs/deployment.md). Base de datos (la primera vez y después de cada cambio de migraciones):
 
 ```bash
-docker compose run --rm tools node scripts/migrate.js up     # aplica migraciones (usuario app_owner)
+docker compose run --rm tools node scripts/migrate.js up     # aplica migraciones (login dueño)
 docker compose run --rm tools node scripts/seed.js system       # permisos, roles iniciales y parámetros
 docker compose run --rm tools node scripts/seed.js dev          # áreas de ejemplo (solo desarrollo)
 docker compose run --rm -it tools node scripts/bootstrap-admin.js       # superadmin inicial (pide los datos)
@@ -68,7 +72,7 @@ El bootstrap no tiene credenciales por defecto: pide usuario, email, nombre, ár
 
 Abrir `https://localhost` en el navegador (aceptar el certificado autofirmado o importar `secrets/tls_cert`).
 
-`docker compose up` aplica automáticamente `docker-compose.override.yml` (solo desarrollo): backend y worker con recarga en caliente y logs legibles, y PostgreSQL y Redis publicados en `127.0.0.1` (puertos 5432 y 6379).
+`docker compose up` aplica automáticamente `docker-compose.override.yml` (solo desarrollo): backend y worker con recarga en caliente y logs legibles, Redis publicado en `127.0.0.1:6379`, y el certificado autofirmado de SQL Server aceptado (`DATABASE_TRUST_SERVER_CERTIFICATE`, que producción rechaza).
 
 Comandos útiles:
 
@@ -76,10 +80,10 @@ Comandos útiles:
 docker compose ps                         # estado y healthchecks
 docker compose logs -f backend worker     # logs
 docker compose down                       # detener (conserva los datos)
-docker compose down -v                    # detener y borrar volúmenes (PostgreSQL y Redis)
+docker compose down -v                    # detener y borrar volúmenes (Redis y archivos; la base es externa)
 ```
 
-Para regenerar los secretos: `npm run secrets:dev -- --force` y luego `docker compose down -v`, porque PostgreSQL solo lee las contraseñas de los roles al crear su volumen.
+Para regenerar los secretos: `npm run secrets:dev -- --force` (conserva las keys de Mandrill y la URL administrativa) y luego `npm run db:provision -- --reset-passwords`, que cambia las claves de los logins en el servidor.
 
 ## Producción
 
@@ -100,7 +104,9 @@ La lista completa, con valores de ejemplo, está en [.env.example](.env.example)
 | Variable | Obligatoria | Descripción |
 | --- | --- | --- |
 | `NODE_ENV` | Sí | `development`, `test` o `production` |
-| `DATABASE_URL(_FILE)` | Sí | Conexión con el usuario `app_runtime` |
+| `DATABASE_URL(_FILE)` | Sí | `sqlserver://<base>_runtime:<clave>@<servidor>:1433/<base>`, login de ejecución (rol `app_runtime`) |
+| `DATABASE_CA_CERT(_FILE)`, `DATABASE_SERVER_NAME` | Sí en producción | CA del certificado de SQL Server y nombre del servidor en ese certificado |
+| `DATABASE_TRUST_SERVER_CERTIFICATE` | No | `true` acepta un certificado autofirmado; solo fuera de producción |
 | `REDIS_URL(_FILE)` | Sí | Conexión con el usuario ACL del servicio |
 | `CSRF_SECRET(_FILE)` | Sí (API) | Secreto aleatorio de al menos 32 caracteres |
 | `DATA_ENCRYPTION_KEY(_FILE)` | Sí (API) | 32 bytes aleatorios en base64 |
@@ -139,7 +145,7 @@ No interfiere con un stack de desarrollo en ejecución: usa otro nombre de proye
 ## Tests
 
 - `backend/tests/unit`: configuración, logger, errores, health, contraseñas, TOTP (vectores de los RFC 4226 y 6238), cifrado, CSRF, etapas de sesión, bloqueo, rate limiter, proveedor de AD y correo del sistema.
-- `backend/tests/integration`: health con PostgreSQL y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas, roles, equivalencias de AD, parámetros y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
+- `backend/tests/integration`: health con SQL Server y Redis reales; matriz de autorización (401/403/éxito, 403 auditados) y estados de sesión inválidos; login, sesiones, CSRF, enumeración, bloqueo y rate limiting; MFA, cambio y recuperación de contraseña; AD con un directorio simulado (ADR-019); usuarios, áreas, roles, equivalencias de AD, parámetros y reglas contra escalamiento; trabajos de vigencia y de revisión de AD.
 - `backend/tests/security`: inventario de rutas (deny by default), exposición de errores, proxy confiable, headers de nginx, TLS y control de egreso.
 - `database/tests`: privilegios de `app_runtime` (auditoría append-only, sin DDL), triggers y restricciones (origen único, roles administrativos solo locales, roles de sistema), seeds y bootstrap.
 
@@ -163,8 +169,7 @@ frontend/           HTML + JS Vanilla (ES Modules), servido por nginx
 e2e/                verificación en navegador (Playwright)
 proxy/              configuración de nginx y su Dockerfile
 infra/              egress-proxy (Squid) y arranque de Redis con ACL
-database/           migraciones, seeds (system/dev), scripts (migrate, seed, bootstrap) y sus tests
-database/init/      creación de roles de PostgreSQL (una vez, al crear el volumen)
+database/           migraciones T-SQL, seeds (system/dev), scripts (provision, migrate, seed, bootstrap) y sus tests
 scripts/            generación de secretos y npm run check
 spikes/mandrill/    scripts de exploración de la fase 0.5 (no son código de producción)
 docs/               especificación, arquitectura, seguridad, ADR, OpenAPI

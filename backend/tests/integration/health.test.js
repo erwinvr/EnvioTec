@@ -10,15 +10,16 @@ import { createRedisClient } from '../../src/core/redis/client.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
 
-describe('health con PostgreSQL y Redis reales', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/check.sh)' }, () => {
+describe('health con SQL Server y Redis reales', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/check.sh)' }, () => {
   let app;
   let pool;
   let redis;
+  let config;
 
   before(async () => {
-    const config = loadConfig(process.env);
+    config = loadConfig(process.env);
     const logger = pino({ level: 'silent' });
-    pool = createPool(config.database, logger, 'enviotec-tests');
+    pool = await createPool(config.database, logger, 'enviotec-tests');
     redis = createRedisClient(config.redis, logger);
     await redis.connect();
     app = await buildApp({
@@ -45,13 +46,15 @@ describe('health con PostgreSQL y Redis reales', { skip: !enabled && 'requiere R
     assert.deepEqual(res.json(), { success: true, data: { status: 'ready' } });
   });
 
-  it('el usuario de la app no es superusuario y tiene statement_timeout', async () => {
+  it('el login de la app solo es miembro de app_runtime: ni dueño de la base ni administrador del servidor', async () => {
     const { rows } = await pool.query(
-      "SELECT current_user AS name, rolsuper, current_setting('statement_timeout') AS timeout FROM pg_roles WHERE rolname = current_user",
+      `SELECT IS_ROLEMEMBER('app_runtime') AS runtime, IS_MEMBER('db_owner') AS db_owner, IS_SRVROLEMEMBER('sysadmin') AS sysadmin,
+              USER_NAME() AS name`,
     );
-    assert.equal(rows[0].name, 'app_runtime');
-    assert.equal(rows[0].rolsuper, false);
-    assert.notEqual(rows[0].timeout, '0');
+    assert.deepEqual([rows[0].runtime, rows[0].db_owner, rows[0].sysadmin], [1, 0, 0]);
+    assert.notEqual(rows[0].name, 'dbo');
+    // Without a per-login statement_timeout, the driver bounds every request.
+    assert.ok(config.database.statementTimeoutMs > 0);
   });
 
   it('el usuario de Redis del backend no puede ejecutar comandos peligrosos', async () => {

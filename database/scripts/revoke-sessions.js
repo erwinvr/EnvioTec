@@ -1,7 +1,7 @@
 // Revokes every active session, or those of one user (runbook):
 //   docker compose run --rm tools node scripts/revoke-sessions.js --reason "Incidente 2026-11"
 //   docker compose run --rm tools node scripts/revoke-sessions.js --reason "Cuenta comprometida" --user <uuid>
-import { inLockedTransaction, loadToolsConfig, withOwnerClient } from './lib/connection.js';
+import { inLockedTransaction, loadToolsConfig, withOwnerDatabase } from './lib/connection.js';
 import { revokeSessions } from './lib/revoke-sessions.js';
 
 const argument = (name) => {
@@ -17,7 +17,8 @@ if (!reason || (userId !== null && !/^[0-9a-f-]{36}$/i.test(userId))) {
 
 try {
   const config = loadToolsConfig();
-  const result = await withOwnerClient(config, (client) => inLockedTransaction(client, 'enviotec.revoke_sessions', () => revokeSessions(client, { reason, userId })));
+  const result = await withOwnerDatabase(config, (db) =>
+    inLockedTransaction(db, 'enviotec.revoke_sessions', (client) => revokeSessions(client, { reason, userId })));
   console.log(`Sesiones revocadas: ${result.sessions}. Cada usuario deberá iniciar sesión de nuevo.`);
 } catch (error) {
   console.error(`No se revocaron sesiones: ${error.message}`);

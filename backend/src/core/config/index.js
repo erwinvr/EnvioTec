@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { Ajv } from 'ajv';
 import { LDAP_KEYS, PROFILES, PROPERTIES, SECRET_KEYS } from './schema.js';
+import { isDatabaseUrl } from '../db/connection-url.js';
 
 export class ConfigError extends Error {
   constructor(problems) {
@@ -95,6 +96,19 @@ function checkSemantics(raw, problems) {
   if (raw.APP_ORIGIN !== undefined && !isOrigin(raw.APP_ORIGIN)) {
     problems.push('APP_ORIGIN: debe ser un origen https sin ruta, por ejemplo https://enviotec.empresa.local');
   }
+  for (const key of ['DATABASE_URL', 'MIGRATION_DATABASE_URL']) {
+    if (raw[key] !== undefined && !isDatabaseUrl(raw[key])) {
+      problems.push(`${key}: debe tener la forma sqlserver://usuario:clave@servidor[:puerto]/base`);
+    }
+  }
+  // The server certificate is always validated in production (fail secure).
+  if (raw.NODE_ENV === 'production' && (raw.DATABASE_URL !== undefined || raw.MIGRATION_DATABASE_URL !== undefined)) {
+    if (raw.DATABASE_TRUST_SERVER_CERTIFICATE === true) {
+      problems.push('DATABASE_TRUST_SERVER_CERTIFICATE: no se admite en producción; configure DATABASE_CA_CERT');
+    } else if (raw.DATABASE_CA_CERT === undefined) {
+      problems.push('DATABASE_CA_CERT: es obligatoria en producción (CA que firmó el certificado de SQL Server)');
+    }
+  }
   if (raw.AD_ENABLED === true) {
     for (const key of LDAP_KEYS) {
       if (raw[key] === undefined) problems.push(`${key}: es obligatoria cuando AD_ENABLED=true`);
@@ -111,6 +125,14 @@ function checkSemantics(raw, problems) {
   if (raw.MANDRILL_SYSTEM_API_KEY !== undefined && raw.MAIL_FROM === undefined) {
     problems.push('MAIL_FROM: es obligatoria cuando se define MANDRILL_SYSTEM_API_KEY');
   }
+}
+
+function databaseTls(raw) {
+  return {
+    caCert: raw.DATABASE_CA_CERT,
+    serverName: raw.DATABASE_SERVER_NAME,
+    trustServerCertificate: raw.DATABASE_TRUST_SERVER_CERTIFICATE === true,
+  };
 }
 
 function isLoopbackHttp(value) {
@@ -164,9 +186,12 @@ function buildConfig(raw) {
       url: raw.DATABASE_URL,
       poolMax: raw.DATABASE_POOL_MAX,
       statementTimeoutMs: raw.DATABASE_STATEMENT_TIMEOUT_MS,
+      ...databaseTls(raw),
     };
   }
-  if (raw.MIGRATION_DATABASE_URL !== undefined) config.migrationDatabaseUrl = raw.MIGRATION_DATABASE_URL;
+  if (raw.MIGRATION_DATABASE_URL !== undefined) {
+    config.migrationDatabase = { url: raw.MIGRATION_DATABASE_URL, statementTimeoutMs: 600000, poolMax: 2, ...databaseTls(raw) };
+  }
   if (raw.REDIS_URL !== undefined) config.redis = { url: raw.REDIS_URL };
   if (raw.PORT !== undefined) config.port = raw.PORT;
   if (raw.APP_ORIGIN !== undefined) {

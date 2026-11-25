@@ -5,6 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { setImmediate } from 'node:timers';
 import { pino } from 'pino';
 import { ensurePartitions } from '../../src/core/db/partitions.js';
+import { createAuditService } from '../../src/core/audit/audit.service.js';
 import { createHarness, PASSWORD } from '../helpers/auth-fixtures.js';
 
 const enabled = process.env.RUN_INTEGRATION === '1';
@@ -58,10 +59,10 @@ describe('consulta y exportación de auditoría', { skip: !enabled && 'requiere 
   });
 
   it('exporta CSV con BOM, neutraliza fórmulas y queda auditada', async () => {
-    await h.owner.query(
-      `SELECT append_audit_log('system', NULL, NULL, 'test.injection', 'test', '=HYPERLINK("http://atacante")', 'success',
-                               NULL, NULL, NULL, '{}')`,
-    );
+    await createAuditService().record(h.owner, {
+      actor: { type: 'system' }, action: 'test.injection', resourceType: 'test', resourceId: '=HYPERLINK("http://atacante")',
+      result: 'success',
+    });
     const { token } = await h.login(auditor.username);
     await h.request('POST', '/api/v1/auth/reauth', { token, payload: { password: PASSWORD } });
     const res = await h.request('GET', `/api/v1/audit-logs/export?${range()}&action=test.injection`, { token });
@@ -73,7 +74,7 @@ describe('consulta y exportación de auditoría', { skip: !enabled && 'requiere 
     assert.ok(!res.body.includes(',"=HYPERLINK'));
 
     const { rows } = await h.owner.query(
-      "SELECT metadata FROM audit_logs WHERE action = 'audit.export' AND actor_user_id = $1 ORDER BY seq DESC LIMIT 1",
+      "SELECT TOP (1) metadata FROM audit_logs WHERE action = 'audit.export' AND actor_user_id = $1 ORDER BY seq DESC",
       [auditor.id],
     );
     assert.equal(rows[0].metadata.filters.action, 'test.injection');
@@ -91,9 +92,9 @@ describe('consulta y exportación de auditoría', { skip: !enabled && 'requiere 
 
   it('la cuenta de emergencia: evento destacado y alerta por correo a los administradores', async () => {
     const emergency = await h.localUser('emergencia');
-    await h.owner.query('UPDATE users SET is_emergency = true WHERE id = $1', [emergency.id]);
-    const { rows: setting } = await h.owner.query("SELECT value FROM system_settings WHERE key = 'notifications.admin_emails'");
-    await h.owner.query("UPDATE system_settings SET value = '[\"seguridad@empresa.test\", \"ti@empresa.test\"]' WHERE key = 'notifications.admin_emails'");
+    await h.owner.query('UPDATE users SET is_emergency = 1 WHERE id = $1', [emergency.id]);
+    const { rows: setting } = await h.owner.query("SELECT value FROM system_settings WHERE [key] = 'notifications.admin_emails'");
+    await h.owner.query("UPDATE system_settings SET value = '[\"seguridad@empresa.test\", \"ti@empresa.test\"]' WHERE [key] = 'notifications.admin_emails'");
     try {
       mailer.sent.length = 0;
       const { res } = await h.login(emergency.username);
@@ -105,7 +106,7 @@ describe('consulta y exportación de auditoría', { skip: !enabled && 'requiere 
       assert.equal(events.length, 1);
       assert.equal(events[0].metadata.highlighted, true);
     } finally {
-      await h.owner.query("UPDATE system_settings SET value = $1 WHERE key = 'notifications.admin_emails'", [JSON.stringify(setting[0].value)]);
+      await h.owner.query("UPDATE system_settings SET value = $1 WHERE [key] = 'notifications.admin_emails'", [JSON.stringify(setting[0].value)]);
     }
   });
 
@@ -113,8 +114,8 @@ describe('consulta y exportación de auditoría', { skip: !enabled && 'requiere 
     const report = await ensurePartitions(h.pool, pino({ level: 'silent' }));
     assert.equal(report.audit_logs.ok, true);
     const { rows } = await h.owner.query(
-      `SELECT count(*)::int AS n FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
-        WHERE i.inhparent = 'audit_logs'::regclass`,
+      `SELECT COUNT(*) + 1 AS n FROM sys.partition_range_values v JOIN sys.partition_functions f ON f.function_id = v.function_id
+        WHERE f.name = 'pf_audit_logs' AND CAST(v.value AS datetime2(3)) >= DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)`,
     );
     assert.ok(rows[0].n >= 13);
     const again = await ensurePartitions(h.pool, pino({ level: 'silent' }));

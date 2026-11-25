@@ -1,3 +1,4 @@
+import { createAuditService } from '../../../backend/src/core/audit/audit.service.js';
 import { decryptSecret, encryptSecret } from '../../../backend/src/core/security/encryption.js';
 
 // Re-encrypts every secret stored with DATA_ENCRYPTION_KEY (today, the TOTP
@@ -13,7 +14,7 @@ export function parseKey(text, label) {
 
 export async function rotateEncryptionKey(client, { oldKey, newKey }) {
   if (oldKey.equals(newKey)) throw new Error('la clave nueva es igual a la actual');
-  const { rows } = await client.query('SELECT id, mfa_secret_encrypted FROM users WHERE mfa_secret_encrypted IS NOT NULL FOR UPDATE');
+  const { rows } = await client.query('SELECT id, mfa_secret_encrypted FROM users WITH (UPDLOCK, ROWLOCK) WHERE mfa_secret_encrypted IS NOT NULL');
   for (const row of rows) {
     const aad = `mfa:${row.id}`;
     let secret;
@@ -24,9 +25,10 @@ export async function rotateEncryptionKey(client, { oldKey, newKey }) {
     }
     await client.query('UPDATE users SET mfa_secret_encrypted = $2 WHERE id = $1', [row.id, encryptSecret(newKey, secret, aad)]);
   }
-  await client.query(
-    "SELECT append_audit_log('system', NULL, NULL, 'security.key_rotation', 'data_encryption_key', NULL, 'success', NULL, NULL, NULL, jsonb_build_object('secrets', $1::int))",
-    [rows.length],
-  );
+  await createAuditService().record(client, {
+    actor: { type: 'system' }, action: 'security.key_rotation', resourceType: 'data_encryption_key', result: 'success',
+    // "reencrypted": a key with "secret" in its name is dropped from audit metadata.
+    metadata: { reencrypted: rows.length },
+  });
   return { secrets: rows.length };
 }

@@ -11,7 +11,8 @@
     "lint": "eslint --max-warnings=0 .",
     "check": "bash scripts/check.sh",
     "secrets:dev": "bash scripts/generate-dev-secrets.sh",
-    "test:frontend": "node --test frontend/tests/*.test.js"
+    "test:frontend": "node --test frontend/tests/*.test.js",
+    "db:provision": "bash scripts/db-provision.sh"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -26,7 +26,8 @@ const VALIDATION_CODES = {
   pattern: 'invalid_format',
 };
 
-// PostgreSQL errors that are the client's fault (A10): translated without
+// Database errors that are the client's fault (A10), with SQLSTATE codes
+// (core/db/errors.js maps SQL Server's): translated without
 // exposing the SQL, the constraint or the values.
 const DATABASE_ERRORS = {
   23505: () => new ConflictError('Ya existe un registro con esos datos'),

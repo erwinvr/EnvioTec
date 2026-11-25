@@ -1,25 +1,29 @@
-// SQL of the roles module. `db` is the pool or a transaction client.
+import { existsBit, inJson, jsonStrings, returning } from '../../core/db/sql.js';
 
-const SUMMARY = `
+// SQL of the roles module. `db` is the pool or a transaction client. roles,
+// role_permissions and user_roles have guard triggers (ADR-007): OUTPUT goes
+// through a table variable there.
+
+const summary = (lock = '') => `
   SELECT r.id, r.name, r.description, r.is_system, r.created_at, r.updated_at,
-         (SELECT count(*)::int FROM user_roles ur WHERE ur.role_id = r.id) AS user_count,
-         (SELECT count(*)::int FROM ad_group_role_mappings m WHERE m.role_id = r.id) AS mapping_count,
-         EXISTS (SELECT 1 FROM user_roles ur JOIN users u ON u.id = ur.user_id
-                  WHERE ur.role_id = r.id AND (u.auth_source = 'ad' OR ur.source = 'ad_group'))
-           OR EXISTS (SELECT 1 FROM ad_group_role_mappings m WHERE m.role_id = r.id) AS used_from_ad,
-         coalesce((SELECT array_agg(p.code ORDER BY p.code) FROM role_permissions rp
-                     JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id), '{}') AS permissions
-    FROM roles r`;
+         (SELECT COUNT(*) FROM user_roles ur WHERE ur.role_id = r.id) AS user_count,
+         (SELECT COUNT(*) FROM ad_group_role_mappings m WHERE m.role_id = r.id) AS mapping_count,
+         ${existsBit(`SELECT 1 FROM user_roles ur JOIN users u ON u.id = ur.user_id
+                       WHERE ur.role_id = r.id AND (u.auth_source = 'ad' OR ur.source = 'ad_group')
+                      UNION ALL SELECT 1 FROM ad_group_role_mappings m WHERE m.role_id = r.id`)} AS used_from_ad,
+         (SELECT ${jsonStrings('p.code')} FROM role_permissions rp
+            JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id) AS permissions
+    FROM roles r ${lock}`;
 
 export function createRolesRepository() {
   return {
     async list(db) {
-      const { rows } = await db.query(`${SUMMARY} ORDER BY r.name`);
+      const { rows } = await db.query(`${summary()} ORDER BY r.name`);
       return rows;
     },
 
     async findById(db, id, { forUpdate = false } = {}) {
-      const { rows } = await db.query(`${SUMMARY} WHERE r.id = $1 ${forUpdate ? 'FOR UPDATE OF r' : ''}`, [id]);
+      const { rows } = await db.query(`${summary(forUpdate ? 'WITH (UPDLOCK, ROWLOCK)' : '')} WHERE r.id = $1`, [id]);
       return rows[0] ?? null;
     },
 
@@ -29,8 +33,9 @@ export function createRolesRepository() {
     },
 
     async create(db, { name, description, actorId }) {
+      const out = returning({ id: 'uniqueidentifier' });
       const { rows } = await db.query(
-        'INSERT INTO roles (name, description, created_by, updated_by) VALUES ($1, $2, $3, $3) RETURNING id',
+        `${out.declare} INSERT INTO roles (name, description, created_by, updated_by) ${out.output} VALUES ($1, $2, $3, $3); ${out.select}`,
         [name, description ?? '', actorId],
       );
       return rows[0].id;
@@ -38,8 +43,9 @@ export function createRolesRepository() {
 
     async update(db, id, changes, actorId) {
       await db.query(
-        `UPDATE roles SET name = CASE WHEN $2 THEN $3 ELSE name END,
-                          description = CASE WHEN $4 THEN $5 ELSE description END, updated_by = $6
+        `UPDATE roles SET name = CASE WHEN $2 = 1 THEN $3 ELSE name END,
+                          description = CASE WHEN $4 = 1 THEN $5 ELSE description END,
+                          updated_by = $6, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, 'name' in changes, changes.name ?? null, 'description' in changes, changes.description ?? null, actorId],
       );
@@ -47,14 +53,15 @@ export function createRolesRepository() {
 
     async setPermissions(db, roleId, codes, actorId) {
       await db.query(
-        `DELETE FROM role_permissions rp USING permissions p
-          WHERE rp.role_id = $1 AND p.id = rp.permission_id AND NOT (p.code = ANY($2::text[]))`,
+        `DELETE rp FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+          WHERE rp.role_id = $1 AND p.code NOT IN ${inJson('$2')}`,
         [roleId, codes],
       );
       await db.query(
         `INSERT INTO role_permissions (role_id, permission_id, granted_by)
-         SELECT $1, p.id, $3 FROM permissions p WHERE p.code = ANY($2::text[])
-         ON CONFLICT DO NOTHING`,
+         SELECT $1, p.id, $3 FROM permissions p
+          WHERE p.code IN ${inJson('$2')}
+            AND NOT EXISTS (SELECT 1 FROM role_permissions x WHERE x.role_id = $1 AND x.permission_id = p.id)`,
         [roleId, codes, actorId],
       );
     },
@@ -72,7 +79,7 @@ export function createRolesRepository() {
     // A6 rule 6 and A5: users of a role whose permissions changed sign in again.
     async revokeSessionsOfRole(db, roleId) {
       const { rowCount } = await db.query(
-        `UPDATE sessions SET revoked_at = now(), revoked_reason = 'role_permissions_changed'
+        `UPDATE sessions SET revoked_at = SYSUTCDATETIME(), revoked_reason = 'role_permissions_changed'
           WHERE revoked_at IS NULL AND user_id IN (SELECT user_id FROM user_roles WHERE role_id = $1)`,
         [roleId],
       );

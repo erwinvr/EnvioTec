@@ -15,7 +15,7 @@ export function createMfaRepository() {
 
     async consumeRecoveryCode(db, userId, codeHash) {
       const { rowCount } = await db.query(
-        `UPDATE mfa_recovery_codes SET used_at = now()
+        `UPDATE mfa_recovery_codes SET used_at = SYSUTCDATETIME()
           WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL`,
         [userId, codeHash],
       );
@@ -24,7 +24,7 @@ export function createMfaRepository() {
 
     async enableMfa(db, userId, encryptedSecret, step) {
       const { rowCount } = await db.query(
-        `UPDATE users SET mfa_secret_encrypted = $2, mfa_enabled_at = now(), mfa_last_used_step = $3
+        `UPDATE users SET mfa_secret_encrypted = $2, mfa_enabled_at = SYSUTCDATETIME(), mfa_last_used_step = $3
           WHERE id = $1 AND mfa_enabled_at IS NULL`,
         [userId, encryptedSecret, step],
       );
@@ -34,14 +34,15 @@ export function createMfaRepository() {
     async replaceRecoveryCodes(db, userId, codeHashes) {
       await db.query('DELETE FROM mfa_recovery_codes WHERE user_id = $1', [userId]);
       await db.query(
-        'INSERT INTO mfa_recovery_codes (user_id, code_hash) SELECT $1, unnest($2::bytea[])',
-        [userId, codeHashes],
+        'INSERT INTO mfa_recovery_codes (user_id, code_hash) SELECT $1, CONVERT(varbinary(32), value, 2) FROM OPENJSON($2)',
+        [userId, codeHashes.map((hash) => hash.toString('hex'))],
       );
     },
 
     async disableMfa(db, userId, actorId) {
       await db.query(
-        `UPDATE users SET mfa_secret_encrypted = NULL, mfa_enabled_at = NULL, mfa_last_used_step = NULL, updated_by = $2
+        `UPDATE users SET mfa_secret_encrypted = NULL, mfa_enabled_at = NULL, mfa_last_used_step = NULL, updated_by = $2,
+                updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [userId, actorId],
       );
@@ -51,7 +52,7 @@ export function createMfaRepository() {
     async findValidEnrollmentCode(db, userId, codeHash, maxAttempts) {
       const { rows } = await db.query(
         `SELECT id FROM mfa_enrollment_codes
-          WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL AND expires_at > now() AND failed_attempts < $3`,
+          WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL AND expires_at > SYSUTCDATETIME() AND failed_attempts < $3`,
         [userId, codeHash, maxAttempts],
       );
       return rows[0]?.id ?? null;
@@ -60,15 +61,15 @@ export function createMfaRepository() {
     async addEnrollmentFailure(db, userId) {
       await db.query(
         `UPDATE mfa_enrollment_codes SET failed_attempts = failed_attempts + 1
-          WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()`,
+          WHERE user_id = $1 AND used_at IS NULL AND expires_at > SYSUTCDATETIME()`,
         [userId],
       );
     },
 
     async useEnrollmentCode(db, codeId, maxAttempts) {
       const { rowCount } = await db.query(
-        `UPDATE mfa_enrollment_codes SET used_at = now()
-          WHERE id = $1 AND used_at IS NULL AND expires_at > now() AND failed_attempts < $2`,
+        `UPDATE mfa_enrollment_codes SET used_at = SYSUTCDATETIME()
+          WHERE id = $1 AND used_at IS NULL AND expires_at > SYSUTCDATETIME() AND failed_attempts < $2`,
         [codeId, maxAttempts],
       );
       return rowCount === 1;
@@ -77,7 +78,7 @@ export function createMfaRepository() {
     // A new code (or a reset) invalidates any previous unused one.
     async expireEnrollmentCodes(db, userId) {
       await db.query(
-        'UPDATE mfa_enrollment_codes SET expires_at = now() WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()',
+        'UPDATE mfa_enrollment_codes SET expires_at = SYSUTCDATETIME() WHERE user_id = $1 AND used_at IS NULL AND expires_at > SYSUTCDATETIME()',
         [userId],
       );
     },
@@ -85,8 +86,8 @@ export function createMfaRepository() {
     async createEnrollmentCode(db, { userId, codeHash, issuedBy, validityHours }) {
       const { rows } = await db.query(
         `INSERT INTO mfa_enrollment_codes (user_id, code_hash, issued_by, expires_at)
-         VALUES ($1, $2, $3, now() + make_interval(hours => $4))
-         RETURNING id, expires_at`,
+         OUTPUT inserted.id, inserted.expires_at
+         VALUES ($1, $2, $3, DATEADD(hour, $4, SYSUTCDATETIME()))`,
         [userId, codeHash, issuedBy, validityHours],
       );
       return rows[0];

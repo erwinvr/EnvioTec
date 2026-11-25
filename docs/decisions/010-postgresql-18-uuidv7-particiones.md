@@ -1,6 +1,6 @@
 # ADR-010: PostgreSQL 18, UUIDv7 y particionado mensual
 
-- **Estado:** Aceptado
+- **Estado:** Aceptado. **Reemplazado en parte por [ADR-032](032-sql-server.md)** (2026-11-24): la base es SQL Server
 - **Fecha:** 2026-10-31
 
 ## Contexto

@@ -38,7 +38,7 @@ const AD_REVIEW_MS = 15 * 60 * 1000;
 const config = loadConfigOrExit('worker');
 const logger = createLogger(config, { service: 'worker' });
 
-const pool = createPool(config.database, logger, 'enviotec-worker');
+const pool = await createPool(config.database, logger, 'enviotec-worker');
 const redis = createRedisClient(config.redis, logger);
 await redis.connect();
 await pool.query('SELECT 1');

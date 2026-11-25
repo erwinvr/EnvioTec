@@ -9,7 +9,7 @@ import { createRedisClient } from './core/redis/client.js';
 const config = loadConfigOrExit('api');
 const logger = createLogger(config, { service: 'backend' });
 
-const pool = createPool(config.database, logger, 'enviotec-backend');
+const pool = await createPool(config.database, logger, 'enviotec-backend');
 const redis = createRedisClient(config.redis, logger);
 await redis.connect();
 

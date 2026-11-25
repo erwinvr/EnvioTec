@@ -66,7 +66,7 @@ describe('alcance por área (ADR-008)', () => {
     const params = ['x'];
     assert.equal(areaCondition({ all: false, areaId: 'a1' }, 'c.area_id', params), 'c.area_id = $2');
     assert.deepEqual(params, ['x', 'a1']);
-    assert.equal(areaCondition({ all: true }, 'area_id', []), 'TRUE');
+    assert.equal(areaCondition({ all: true }, 'area_id', []), '1 = 1');
   });
 
   it('niega el acceso sin alcance y rechaza nombres de columna inseguros', () => {

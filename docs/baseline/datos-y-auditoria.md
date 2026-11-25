@@ -19,22 +19,22 @@ Todo proyecto parte con estas tablas. Los módulos de negocio de la Parte B se a
 
 **Reglas generales:**
 
-- Claves primarias **UUID** (v7 si la versión de PostgreSQL o una librería lo permite, por orden temporal) para no exponer IDs secuenciales.
+- Claves primarias **UUID** (`uniqueidentifier` con `NEWSEQUENTIALID()`, que mantiene el orden de inserción en el índice) para no exponer IDs secuenciales.
 - Claves foráneas, `NOT NULL`, `UNIQUE` y `CHECK` donde corresponda. La integridad se garantiza en la base de datos, no solo en el código.
 - Índices para cada FK y para los campos de búsqueda, filtro y ordenamiento de los listados.
-- Fechas en `timestamptz`, almacenadas en **UTC**.
+- Fechas en `datetime2(3)`, almacenadas en **UTC**.
 - `created_at` y `updated_at` en todas las tablas de negocio.
 - **Soft delete** en usuarios (`deleted_at` + `status`) para preservar la auditoría. Las consultas por defecto excluyen registros borrados.
 
 **Usuarios de base de datos con mínimo privilegio:**
 
-| Usuario PostgreSQL | Permisos | Uso |
+| Login de SQL Server | Permisos | Uso |
 | --- | --- | --- |
-| `app_owner` | Dueño del esquema, DDL | Solo migraciones. Nunca usado por la app en ejecución |
-| `app_runtime` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` sobre tablas de negocio; **solo `INSERT` y `SELECT`** sobre `audit_logs` | La aplicación |
+| `<base>_owner` | Dueño de la base (solo de ella), DDL | Solo aprovisionamiento, migraciones, seeds y bootstrap. Nunca usado por la app en ejecución |
+| `<base>_runtime` (rol de base `app_runtime`) | `SELECT`, `INSERT`, `UPDATE`, `DELETE` sobre tablas de negocio, según cada tabla; sobre `audit_logs`, **solo `SELECT` y `EXECUTE` del procedimiento que agrega eventos** | La aplicación |
 | `app_readonly` | `SELECT` | Reportes y soporte, opcional |
 
-Ningún usuario de la aplicación es superusuario. Las migraciones crean y otorgan estos permisos de forma explícita.
+Ningún login de la aplicación es administrador del servidor. El aprovisionamiento crea los logins con una credencial administrativa que la aplicación nunca usa, y las migraciones otorgan los permisos de forma explícita (ADR-032).
 
 ## A7. Auditoría
 
@@ -53,7 +53,7 @@ La auditoría es **append-only y protegida en la base de datos**, no solo en la 
 
 **Protección:**
 
-- El usuario `app_runtime` solo tiene `INSERT` y `SELECT` sobre `audit_logs`. Un trigger rechaza `UPDATE` y `DELETE` incluso si se otorgaran por error.
+- El login de ejecución solo puede leer `audit_logs` y agregar eventos con el procedimiento `append_audit_log`; no tiene `INSERT`, `UPDATE` ni `DELETE` sobre la tabla. Un trigger rechaza `UPDATE` y `DELETE` incluso si se otorgaran por error.
 - **Encadenamiento por hash:** cada registro guarda el hash del anterior. Un script de verificación detecta registros alterados o eliminados. La inserción debe serializarse (por ejemplo con un advisory lock) para que dos inserciones concurrentes no usen el mismo `prev_hash`.
 - La escritura de auditoría ocurre en la **misma transacción** que la acción auditada cuando la acción modifica datos. Si la auditoría falla, la acción falla.
 - La consulta requiere `audit.view`; la exportación, `audit.export` (que también se audita).

@@ -20,17 +20,17 @@ describe('reportes', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/ch
   const get = (token, url) => h.request('GET', url, { token });
 
   async function seedCampaign(areaId, userId) {
-    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2) RETURNING id', [areaId, `${h.prefix}-t-${Math.random()}`]);
+    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [areaId, `${h.prefix}-t-${Math.random()}`]);
     const { rows: version } = await h.owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
-       VALUES ($1, 1, 'ready', gen_random_uuid(), 'p.docx', 10, repeat('a', 64), '<p>x</p>', 'x', '{}', $2) RETURNING id`, [template[0].id, userId],
+       OUTPUT inserted.id VALUES ($1, 1, 'ready', NEWID(), 'p.docx', 10, REPLICATE('a', 64), '<p>x</p>', 'x', '[]', $2)`, [template[0].id, userId],
     );
-    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [areaId, `${h.prefix}-l-${Math.random()}`]);
-    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [areaId, `${h.prefix}-l-${Math.random()}`]);
+    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [areaId, `${h.prefix}.${Math.random().toString(36).slice(2)}@envios.test`, 'Ventas']);
     const { rows } = await h.owner.query(
       `INSERT INTO campaigns (area_id, name, status, subject, template_version_id, list_id, sender_id, created_by, started_at, finished_at, recipient_count)
-       VALUES ($1, $2, 'completed', 'Novedades', $3, $4, $5, $6, now(), now(), 5) RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, $2, 'completed', 'Novedades', $3, $4, $5, $6, SYSUTCDATETIME(), SYSUTCDATETIME(), 5)`,
       [areaId, `${h.prefix} Reporte`, version[0].id, list[0].id, sender[0].id, userId],
     );
     return rows[0].id;
@@ -39,13 +39,13 @@ describe('reportes', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/ch
   async function recipient(id, name, status, events = []) {
     const { rows } = await h.owner.query(
       `INSERT INTO campaign_recipients (campaign_id, email, status, message_id, sent_at)
-       VALUES ($1, $2, $3, CASE WHEN $3 = 'sent' THEN md5(random()::text) END, CASE WHEN $3 = 'sent' THEN now() END) RETURNING id, message_id`,
+       OUTPUT inserted.id, inserted.message_id VALUES ($1, $2, $3, CASE WHEN $3 = 'sent' THEN CONVERT(varchar(32), HASHBYTES('MD5', CAST(NEWID() AS varchar(36))), 2) END, CASE WHEN $3 = 'sent' THEN SYSUTCDATETIME() END)`,
       [id, name.includes('@') ? name : email(name), status],
     );
     for (const type of events) {
       await h.owner.query(
         `INSERT INTO message_events (campaign_id, recipient_id, message_id, event_type, occurred_at, url, idempotency_key)
-         VALUES ($1, $2, $3, $4, now(), CASE WHEN $4 = 'click' THEN 'https://empresa.test' END, sha256(random()::text::bytea))`,
+         VALUES ($1, $2, $3, $4, SYSUTCDATETIME(), CASE WHEN $4 = 'click' THEN 'https://empresa.test' END, HASHBYTES('SHA2_256', CAST(NEWID() AS varchar(36))))`,
         [id, rows[0].id, rows[0].message_id, type],
       );
     }

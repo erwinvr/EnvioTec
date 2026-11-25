@@ -20,20 +20,20 @@ describe('alcance de escritura por área', { skip: !enabled && 'requiere RUN_INT
 
   // Template, list with a contact, sender and a submitted campaign in another area.
   async function seedForeignArea(ownerId) {
-    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-ajena`]);
+    const { rows: template } = await h.owner.query('INSERT INTO templates (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [otherArea, `${h.prefix}-ajena`]);
     const { rows: version } = await h.owner.query(
       `INSERT INTO template_versions (template_id, version, status, file_id, original_name, size_bytes, sha256, html, text_body, variables, created_by)
-       VALUES ($1, 1, 'ready', gen_random_uuid(), 'p.docx', 10, repeat('a', 64), '<p>x</p>', 'x', '{}', $2) RETURNING id`, [template[0].id, ownerId],
+       OUTPUT inserted.id VALUES ($1, 1, 'ready', NEWID(), 'p.docx', 10, REPLICATE('a', 64), '<p>x</p>', 'x', '[]', $2)`, [template[0].id, ownerId],
     );
-    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-lista-ajena`]);
+    const { rows: list } = await h.owner.query('INSERT INTO contact_lists (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [otherArea, `${h.prefix}-lista-ajena`]);
     const { rows: contact } = await h.owner.query(
-      "INSERT INTO contacts (area_id, list_id, email, first_name) VALUES ($1, $2, $3, 'X') RETURNING id", [otherArea, list[0].id, `${h.prefix}.c@ajena.test`],
+      "INSERT INTO contacts (area_id, list_id, email, first_name) OUTPUT inserted.id VALUES ($1, $2, $3, 'X')", [otherArea, list[0].id, `${h.prefix}.c@ajena.test`],
     );
-    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) VALUES ($1, $2, $3) RETURNING id',
+    const { rows: sender } = await h.owner.query('INSERT INTO sender_identities (area_id, email, display_name) OUTPUT inserted.id VALUES ($1, $2, $3)',
       [otherArea, `${h.prefix}@envios.test`, 'Ajena']);
     const { rows: campaign } = await h.owner.query(
       `INSERT INTO campaigns (area_id, name, status, subject, template_version_id, list_id, sender_id, created_by, submitted_by, submitted_at)
-       VALUES ($1, 'Campaña ajena', 'submitted', 'Asunto', $2, $3, $4, $5, $5, now()) RETURNING id`,
+       OUTPUT inserted.id VALUES ($1, 'Campaña ajena', 'submitted', 'Asunto', $2, $3, $4, $5, $5, SYSUTCDATETIME())`,
       [otherArea, version[0].id, list[0].id, sender[0].id, ownerId],
     );
     return { templateId: template[0].id, listId: list[0].id, contactId: contact[0].id, campaignId: campaign[0].id, senderId: sender[0].id };

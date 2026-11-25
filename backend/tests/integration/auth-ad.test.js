@@ -17,17 +17,20 @@ describe('autenticación con AD (directorio simulado)', { skip: !enabled && 'req
   const name = (suffix) => `${h.prefix}.${suffix}`;
   const userRow = async (username) => (await h.owner.query(
     `SELECT u.id, u.auth_source, u.area_id, u.ad_object_guid, u.username,
-            array(SELECT role_id::text FROM user_roles WHERE user_id = u.id AND source = 'ad_group') AS ad_roles
+            (SELECT STRING_AGG(LOWER(CONVERT(varchar(36), role_id)), ',') FROM user_roles WHERE user_id = u.id AND source = 'ad_group') AS ad_roles
        FROM users u WHERE u.username = $1`,
     [username],
-  )).rows[0];
+  )).rows.map((row) => ({ ...row, ad_roles: row.ad_roles ? row.ad_roles.split(',') : [] }))[0];
 
   before(async () => {
     dir = createDirectory();
     h = await createHarness({ env: AD_ENV, adClientFactory: dir.factory });
     operatorRole = await h.role('operador', ['campaigns.view']);
-    await h.owner.query('INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2) ON CONFLICT (group_dn) DO UPDATE SET role_id = $2',
-      [OPERATORS, operatorRole]);
+    await h.owner.query(
+      `IF EXISTS (SELECT 1 FROM ad_group_role_mappings WHERE group_dn = $1) UPDATE ad_group_role_mappings SET role_id = $2 WHERE group_dn = $1;
+       ELSE INSERT INTO ad_group_role_mappings (group_dn, role_id) VALUES ($1, $2);`,
+      [OPERATORS, operatorRole],
+    );
   });
   after(async () => {
     await h?.owner.query('DELETE FROM ad_group_role_mappings WHERE group_dn = $1', [OPERATORS]);
@@ -48,7 +51,7 @@ describe('autenticación con AD (directorio simulado)', { skip: !enabled && 'req
     assert.equal(created[0].metadata.source, 'ad_jit');
 
     assert.equal((await h.login(name('ana'))).res.statusCode, 200);
-    const { rows } = await h.owner.query('SELECT count(*)::int AS n FROM users WHERE ad_object_guid = $1', [row.ad_object_guid]);
+    const { rows } = await h.owner.query('SELECT COUNT(*) AS n FROM users WHERE ad_object_guid = $1', [row.ad_object_guid]);
     assert.equal(rows[0].n, 1, 'el segundo login no duplica la cuenta');
   });
 
@@ -101,7 +104,10 @@ describe('autenticación con AD (directorio simulado)', { skip: !enabled && 'req
     assert.equal(blocked.res.statusCode, 401);
     assert.equal(dir.state.userBinds, binds, 'con la cuenta bloqueada no se consulta AD');
     assert.equal(user.badPwdCount, 2);
-    const { rows } = await h.owner.query("SELECT locked_until > now() + interval '14 minutes' AS locked FROM users WHERE username = $1", [name('lock')]);
+    const { rows } = await h.owner.query(
+      "SELECT CAST(CASE WHEN locked_until > DATEADD(minute, 14, SYSUTCDATETIME()) THEN 1 ELSE 0 END AS bit) AS locked FROM users WHERE username = $1",
+      [name('lock')],
+    );
     assert.equal(rows[0].locked, true, 'bloqueo de 15 minutos');
   });
 
@@ -121,7 +127,7 @@ describe('autenticación con AD (directorio simulado)', { skip: !enabled && 'req
     assert.equal(res.statusCode, 401);
     assert.equal(await userRow(name('colision-ad')), undefined);
     const { rows } = await h.owner.query(
-      "SELECT 1 FROM audit_logs WHERE action = 'auth.ad_collision' AND metadata->>'username' = $1", [name('colision-ad')],
+      "SELECT 1 FROM audit_logs WHERE action = 'auth.ad_collision' AND JSON_VALUE(metadata, '$.username') = $1", [name('colision-ad')],
     );
     assert.equal(rows.length, 1);
   });

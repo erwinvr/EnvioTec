@@ -1,7 +1,10 @@
+import { inJson } from '../../core/db/sql.js';
+
 // SQL of the campaign sender (ADR-005, ADR-024). Runs in the worker;
 // nothing here is reachable from HTTP. Event synchronization: sync.repository.js.
 
-const SUPPRESSED = "EXISTS (SELECT 1 FROM suppressions x WHERE x.email_hash = sha256(convert_to(lower(r.email::text), 'UTF8')))";
+
+const SUPPRESSED = 'EXISTS (SELECT 1 FROM suppressions x WHERE x.email_hash = r.email_hash)';
 
 export function createSendingRepository() {
   return {
@@ -9,9 +12,9 @@ export function createSendingRepository() {
     // the scheduled time already reached.
     async dueCampaigns(db) {
       const { rows } = await db.query(
-        `SELECT id FROM campaigns
-          WHERE status IN ('approved', 'scheduled') AND (scheduled_at IS NULL OR scheduled_at <= now())
-          ORDER BY approved_at LIMIT 20`,
+        `SELECT TOP (20) id FROM campaigns
+          WHERE status IN ('approved', 'scheduled') AND (scheduled_at IS NULL OR scheduled_at <= SYSUTCDATETIME())
+          ORDER BY approved_at`,
       );
       return rows.map((row) => row.id);
     },
@@ -19,14 +22,17 @@ export function createSendingRepository() {
     async lockCampaign(db, id) {
       const { rows } = await db.query(
         `SELECT c.id, c.status, c.created_by, c.reserved, c.subject, c.template_version_id, c.sender_id, c.attachment_id, c.area_id, c.list_id
-           FROM campaigns c WHERE c.id = $1 FOR UPDATE`,
+           FROM campaigns c WITH (UPDLOCK, ROWLOCK) WHERE c.id = $1`,
         [id],
       );
       return rows[0] ?? null;
     },
 
     async startCampaign(db, id) {
-      await db.query("UPDATE campaigns SET status = 'sending', started_at = coalesce(started_at, now()) WHERE id = $1", [id]);
+      await db.query(
+        "UPDATE campaigns SET status = 'sending', started_at = COALESCE(started_at, SYSUTCDATETIME()), updated_at = SYSUTCDATETIME() WHERE id = $1",
+        [id],
+      );
     },
 
     // Groups the pending recipients without a batch into batches of `size`.
@@ -35,14 +41,14 @@ export function createSendingRepository() {
       for (;;) {
         const { rows } = await db.query(
           // Only those already due: sending by each contact's date (ADR-030).
-          `SELECT id FROM campaign_recipients
-            WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL AND (send_at IS NULL OR send_at <= now())
-            ORDER BY id LIMIT $2`,
+          `SELECT TOP ($2) id FROM campaign_recipients
+            WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL AND (send_at IS NULL OR send_at <= SYSUTCDATETIME())
+            ORDER BY id`,
           [campaignId, size],
         );
         if (rows.length === 0) return batches;
-        const { rows: batch } = await db.query('INSERT INTO send_batches (campaign_id, size) VALUES ($1, $2) RETURNING id', [campaignId, rows.length]);
-        await db.query('UPDATE campaign_recipients SET batch_id = $1 WHERE id = ANY($2::uuid[])', [batch[0].id, rows.map((row) => row.id)]);
+        const { rows: batch } = await db.query('INSERT INTO send_batches (campaign_id, size) OUTPUT inserted.id VALUES ($1, $2)', [campaignId, rows.length]);
+        await db.query(`UPDATE campaign_recipients SET batch_id = $1 WHERE id IN ${inJson('$2')}`, [batch[0].id, rows.map((row) => row.id)]);
         batches.push(batch[0].id);
       }
     },
@@ -52,10 +58,10 @@ export function createSendingRepository() {
     // 40 and then 60 minutes (T34). Marks them as queued now.
     async batchesToQueue(db, campaignId) {
       const { rows } = await db.query(
-        `UPDATE send_batches SET queued_at = now()
+        `UPDATE send_batches SET queued_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME()
+         OUTPUT inserted.id
           WHERE campaign_id = $1 AND status = 'pending'
-            AND (queued_at IS NULL OR queued_at < now() - make_interval(mins => least(60, 5 * power(2, attempts)::int)))
-          RETURNING id`,
+            AND (queued_at IS NULL OR queued_at < DATEADD(minute, -LEAST(60, 5 * POWER(2, LEAST(attempts, 10))), SYSUTCDATETIME()))`,
         [campaignId],
       );
       return rows.map((row) => row.id);
@@ -64,7 +70,7 @@ export function createSendingRepository() {
     async ambiguousBatches(db) {
       const { rows } = await db.query(
         // Older than the delay of Mandrill's search index (ADR-029).
-        "SELECT id, campaign_id FROM send_batches WHERE status = 'ambiguous' AND updated_at < now() - interval '60 minutes' LIMIT 50",
+        "SELECT TOP (50) id, campaign_id FROM send_batches WHERE status = 'ambiguous' AND updated_at < DATEADD(minute, -60, SYSUTCDATETIME())",
       );
       return rows;
     },
@@ -77,23 +83,26 @@ export function createSendingRepository() {
     // Work left: open batches, or recipients still waiting for their date (ADR-030).
     async openBatches(db, campaignId) {
       const { rows } = await db.query(
-        `SELECT (SELECT count(*)::int FROM send_batches WHERE campaign_id = $1 AND status IN ('pending', 'in_flight', 'ambiguous'))
-              + (SELECT count(*)::int FROM campaign_recipients WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL) AS n`,
+        `SELECT (SELECT COUNT(*) FROM send_batches WHERE campaign_id = $1 AND status IN ('pending', 'in_flight', 'ambiguous'))
+              + (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'pending' AND batch_id IS NULL) AS n`,
         [campaignId],
       );
       return rows[0].n;
     },
 
     async completeCampaign(db, id) {
-      await db.query("UPDATE campaigns SET status = 'completed', finished_at = now(), reserved = 0 WHERE id = $1", [id]);
+      await db.query(
+        "UPDATE campaigns SET status = 'completed', finished_at = SYSUTCDATETIME(), reserved = 0, updated_at = SYSUTCDATETIME() WHERE id = $1",
+        [id],
+      );
     },
 
     async pauseCampaign(db, id) {
-      await db.query("UPDATE campaigns SET status = 'paused' WHERE id = $1 AND status = 'sending'", [id]);
+      await db.query("UPDATE campaigns SET status = 'paused', updated_at = SYSUTCDATETIME() WHERE id = $1 AND status = 'sending'", [id]);
     },
 
     async addReserved(db, id, delta) {
-      await db.query('UPDATE campaigns SET reserved = reserved + $2 WHERE id = $1', [id, delta]);
+      await db.query('UPDATE campaigns SET reserved = reserved + $2, updated_at = SYSUTCDATETIME() WHERE id = $1', [id, delta]);
     },
 
     async batchCampaignId(db, batchId) {
@@ -102,14 +111,14 @@ export function createSendingRepository() {
     },
 
     async lockBatch(db, id) {
-      const { rows } = await db.query('SELECT id, campaign_id, status, attempts FROM send_batches WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await db.query('SELECT id, campaign_id, status, attempts FROM send_batches WITH (UPDLOCK, ROWLOCK) WHERE id = $1', [id]);
       return rows[0] ?? null;
     },
 
     async setBatch(db, id, fields) {
       await db.query(
-        `UPDATE send_batches SET status = $2, attempts = attempts + $3, accepted = coalesce($4, accepted), rejected = coalesce($5, rejected),
-                error = $6, sent_at = CASE WHEN $2 = 'accepted' THEN now() ELSE sent_at END
+        `UPDATE send_batches SET status = $2, attempts = attempts + $3, accepted = COALESCE($4, accepted), rejected = COALESCE($5, rejected),
+                error = $6, sent_at = CASE WHEN $2 = 'accepted' THEN SYSUTCDATETIME() ELSE sent_at END, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, fields.status, fields.attempt ? 1 : 0, fields.accepted ?? null, fields.rejected ?? null, fields.error ?? null],
       );
@@ -119,7 +128,7 @@ export function createSendingRepository() {
     // remove recipients. Returns how many were removed.
     async suppressBatch(db, batchId) {
       const { rowCount } = await db.query(
-        `UPDATE campaign_recipients r SET status = 'suppressed'
+        `UPDATE r SET status = 'suppressed' FROM campaign_recipients r
           WHERE r.batch_id = $1 AND r.status IN ('pending', 'sending') AND ${SUPPRESSED}`,
         [batchId],
       );
@@ -129,7 +138,7 @@ export function createSendingRepository() {
     async batchRecipients(db, batchId, statuses) {
       const { rows } = await db.query(
         `SELECT id, email, first_name, last_name, attributes FROM campaign_recipients
-          WHERE batch_id = $1 AND status = ANY($2::text[]) ORDER BY id`,
+          WHERE batch_id = $1 AND status IN ${inJson('$2')} ORDER BY id`,
         [batchId, statuses],
       );
       return rows;
@@ -141,10 +150,12 @@ export function createSendingRepository() {
 
     async recordResults(db, batchId, results) {
       await db.query(
-        `UPDATE campaign_recipients r SET status = x.status, message_id = x.message_id, error = x.error,
-                sent_at = CASE WHEN x.status = 'sent' THEN now() END
-           FROM jsonb_to_recordset($2::jsonb) AS x(email text, status text, message_id text, error text)
-          WHERE r.batch_id = $1 AND lower(r.email::text) = lower(x.email) AND r.status = 'sending'`,
+        `UPDATE r SET status = x.status, message_id = x.message_id, error = x.error,
+                sent_at = CASE WHEN x.status = 'sent' THEN SYSUTCDATETIME() END
+           FROM campaign_recipients r
+           JOIN OPENJSON($2) WITH (email nvarchar(254), status varchar(10), message_id varchar(100), error nvarchar(200)) x
+             ON r.email = x.email COLLATE Latin1_General_100_CI_AS_SC_UTF8
+          WHERE r.batch_id = $1 AND r.status = 'sending'`,
         [batchId, JSON.stringify(results)],
       );
     },
@@ -168,7 +179,7 @@ export function createSendingRepository() {
     async lockTestSend(db, id) {
       const { rows } = await db.query(
         `SELECT t.id, t.status, t.email, t.campaign_id, c.subject, c.template_version_id, c.sender_id, c.attachment_id, c.list_id
-           FROM campaign_test_sends t JOIN campaigns c ON c.id = t.campaign_id WHERE t.id = $1 FOR UPDATE OF t`,
+           FROM campaign_test_sends t WITH (UPDLOCK, ROWLOCK) JOIN campaigns c ON c.id = t.campaign_id WHERE t.id = $1`,
         [id],
       );
       return rows[0] ?? null;
@@ -176,13 +187,13 @@ export function createSendingRepository() {
 
     async finishTestSend(db, id, { status, messageId = null, error = null }) {
       await db.query(
-        "UPDATE campaign_test_sends SET status = $2, message_id = $3, error = $4, sent_at = CASE WHEN $2 = 'sent' THEN now() END WHERE id = $1",
+        "UPDATE campaign_test_sends SET status = $2, message_id = $3, error = $4, sent_at = CASE WHEN $2 = 'sent' THEN SYSUTCDATETIME() END WHERE id = $1",
         [id, status, messageId, error],
       );
     },
 
     async settings(db, keys) {
-      const { rows } = await db.query('SELECT key, value FROM system_settings WHERE key = ANY($1::text[])', [keys]);
+      const { rows } = await db.query(`SELECT [key], value FROM system_settings WHERE [key] IN ${inJson('$1')}`, [keys]);
       return Object.fromEntries(rows.map((row) => [row.key, row.value]));
     },
   };

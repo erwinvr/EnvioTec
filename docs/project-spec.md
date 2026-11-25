@@ -148,7 +148,7 @@ INTEGRACIONES:        Mailchimp Transactional API (envío y consulta de eventos;
 CARGA DE ARCHIVOS:    Sí — .docx (plantillas), CSV (contactos), PDF (adjunto).
                       Procesamiento en un contenedor aislado en una red Docker
                       interna: solo ve Redis (cola) y ClamAV; sin acceso a
-                      PostgreSQL, sin credenciales de BD y sin salida a internet.
+                      la base de datos, sin credenciales de BD y sin salida a internet.
 PROCESOS EN SEGUNDO PLANO: Sí — worker con cola (BullMQ/Redis) para envíos
                       programados, sincronización de eventos, procesamiento de
                       archivos, control diario de vigencia de cuentas locales y

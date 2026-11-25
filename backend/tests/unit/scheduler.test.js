@@ -3,18 +3,20 @@ import { describe, it } from 'node:test';
 import { createScheduler, runExclusive } from '../../src/core/jobs/scheduler.js';
 import { memoryLogger } from '../helpers/app.js';
 
-// Pool double: the advisory lock is taken or not as told.
+// Database double: the application lock (sp_getapplock) is granted or not
+// as told; the transaction that holds it always ends with a rollback.
 function fakePool({ acquired = true } = {}) {
   const queries = [];
   return {
     queries,
     async connect() {
       return {
+        async begin() { queries.push({ sql: 'BEGIN' }); },
         async query(sql, params) {
           queries.push({ sql, params });
-          return { rows: [{ acquired }] };
+          return { rows: [{ status: acquired ? 0 : -1 }] };
         },
-        release() {},
+        async rollback() { queries.push({ sql: 'ROLLBACK' }); },
       };
     },
   };
@@ -29,9 +31,10 @@ describe('programador de trabajos (ADR-020)', () => {
     await scheduler.every('prueba', 60000, async () => { runs += 1; return { ok: true }; });
     scheduler.stop();
     assert.equal(runs, 1);
-    assert.match(pool.queries[0].sql, /pg_try_advisory_lock/);
-    assert.deepEqual(pool.queries[0].params, ['enviotec.job.prueba']);
-    assert.match(pool.queries.at(-1).sql, /pg_advisory_unlock/);
+    assert.equal(pool.queries[0].sql, 'BEGIN');
+    assert.match(pool.queries[1].sql, /sp_getapplock[\s\S]*@LockTimeout = 0/);
+    assert.deepEqual(pool.queries[1].params, ['enviotec.job.prueba']);
+    assert.equal(pool.queries.at(-1).sql, 'ROLLBACK', 'el lock se libera al cerrar la transacción');
     assert.ok(lines.some((line) => line.includes('job finished')));
   });
 

@@ -15,7 +15,8 @@ alias dc='docker compose -f docker-compose.yml'
 | Certificado TLS | Emitido por la CA interna para el nombre del servidor (`tls_cert`, `tls_key`) |
 | Egreso | El proxy de egreso (`egress-proxy`) sale solo hacia `mandrillapp.com` y los mirrors de ClamAV. El firewall del host debe bloquear cualquier otra salida de los contenedores |
 | Controlador de dominio | Puerto 636 (LDAPS) alcanzable desde la red `directory` (sección 8) |
-| Disco | Volúmenes `pgdata`, `filestore` (PDF e imágenes, retención perpetua) y `clamavdb`. Vigilar el crecimiento (sección 10) |
+| Disco | Volúmenes `filestore` (PDF e imágenes, retención perpetua) y `clamavdb`. Vigilar el crecimiento (sección 7) |
+| Base de datos | SQL Server de la organización (ADR-032), alcanzable por la red `database` en el puerto 1433, con un certificado de la CA interna. La administra el equipo de base de datos |
 | Respaldos | Destino fuera del servidor, cifrado y con acceso restringido (sección 4) |
 
 ## 2. Primer despliegue
@@ -25,12 +26,12 @@ El procedimiento completo está en el [manual de despliegue](deployment.md), sec
 ## 3. Actualización a una nueva versión
 
 1. Antes de actualizar, en el entorno de verificación: `npm run check` en verde para el commit a desplegar.
-2. Respaldo completo (sección 4).
+2. Respaldo completo (sección 4): una copia de la base pedida al equipo de base de datos (o `COPY_ONLY`) y los archivos.
 3. Despliegue:
 
    ```bash
    git fetch && git checkout <tag>
-   dc build
+   dc build && dc build tools
    dc run --rm tools node scripts/migrate.js up
    dc run --rm tools node scripts/seed.js system     # sincroniza permisos y parámetros nuevos
    dc up -d --wait
@@ -45,40 +46,58 @@ El procedimiento completo está en el [manual de despliegue](deployment.md), sec
 ## 4. Respaldo y restauración
 
 **Qué se respalda:**
-- la base `enviotec` (incluye la auditoría, que nunca se purga);
+- la base `enviotec` en SQL Server (incluye la auditoría, que nunca se purga): la respalda el **equipo de base de datos** con sus herramientas (planes de mantenimiento, agente de SQL Server o la solución corporativa);
 - el volumen `filestore`: PDF enviados e imágenes de plantillas, con retención perpetua (Parte B);
 - el directorio de secretos, por separado y con otro custodio.
 
-**Respaldo diario**, programado con cron o un temporizador de systemd:
+**Base de datos.** Lo que EnvioTec necesita del respaldo:
+
+| Requisito | Motivo |
+| --- | --- |
+| Modelo de recuperación `FULL`, respaldo completo diario y de log cada 15 minutos (o la política de la organización) | Recuperar hasta un punto en el tiempo ante un error o un incidente |
+| Respaldo cifrado (`WITH ENCRYPTION`) y con `CHECKSUM` | Contiene datos personales de contactos: el mismo nivel de protección que la base |
+| Copia fuera del servidor de base | Pérdida del servidor |
+| Retención: 30 diarios, 12 mensuales y los anuales que defina la organización | Auditoría y retención perpetua de eventos |
+
+Ejemplo de un respaldo manual, por ejemplo antes de una actualización, que corre el equipo de base de datos:
+
+```sql
+BACKUP DATABASE enviotec TO DISK = N'<ruta>\enviotec-<fecha>.bak'
+  WITH COPY_ONLY, COMPRESSION, CHECKSUM,
+       ENCRYPTION (ALGORITHM = AES_256, SERVER CERTIFICATE = <certificado de respaldo>);
+```
+
+**Archivos**, programado con cron o un temporizador de systemd en el servidor de aplicación:
 
 ```bash
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
-dc exec -T postgres pg_dump -U postgres -d enviotec -Fc > "backup/enviotec-$stamp.dump"
 docker run --rm -v enviotec_filestore:/data:ro -v "$PWD/backup:/backup" alpine:3.22 \
   tar -czf "/backup/filestore-$stamp.tar.gz" -C /data .
-sha256sum backup/*-"$stamp".* > "backup/SHA256SUMS-$stamp"
+sha256sum backup/filestore-"$stamp".tar.gz > "backup/SHA256SUMS-$stamp"
 ```
 
-- Cifre los archivos antes de copiarlos fuera del servidor, por ejemplo con `age` o `gpg` usando la clave pública del custodio.
-- Retención sugerida: 30 diarios, 12 mensuales y los anuales que defina la organización.
-- El dump contiene datos personales de contactos: tiene el mismo nivel de protección que la base.
+Cifre el archivo antes de copiarlo fuera del servidor, por ejemplo con `age` o `gpg` usando la clave pública del custodio.
 
 **Restauración**, que se prueba al menos cada trimestre en un servidor aparte:
 
-```bash
-dc down
-docker volume rm enviotec_pgdata enviotec_filestore
-dc up -d --wait postgres          # crea los roles con los secretos actuales (database/init)
-dc exec -T postgres pg_restore -U postgres -d enviotec --no-owner --role=app_owner < backup/enviotec-<stamp>.dump
-docker run --rm -v enviotec_filestore:/data -v "$PWD/backup:/backup:ro" alpine:3.22 \
-  tar -xzf /backup/filestore-<stamp>.tar.gz -C /data
-dc run --rm tools node scripts/migrate.js up
-dc up -d --wait
-dc run --rm tools node scripts/audit-verify.js   # la cadena debe verificarse íntegra
-```
+1. El equipo de base de datos restaura la base (`RESTORE DATABASE ... WITH RECOVERY`) con el mismo nombre.
+2. Los logins se vuelven a enlazar con los usuarios de la base. `npm run db:provision` lo hace y no cambia nada si ya están bien: deja el login dueño como dueño de la base y al login de ejecución en el rol `app_runtime`.
+3. Los archivos:
 
-- `pg_restore` sobre una base recién inicializada restaura también los permisos de `app_runtime`, porque las migraciones los otorgan de forma explícita.
-- Después, `migrate.js up` confirma que el esquema quedó en la última versión.
+   ```bash
+   dc down
+   docker volume rm enviotec_filestore
+   docker run --rm -v enviotec_filestore:/data -v "$PWD/backup:/backup:ro" alpine:3.22 \
+     tar -xzf /backup/filestore-<stamp>.tar.gz -C /data
+   ```
+
+4. Esquema y verificación:
+
+   ```bash
+   dc run --rm tools node scripts/migrate.js up     # confirma que el esquema está en la última versión
+   dc up -d --wait
+   dc run --rm tools node scripts/audit-verify.js   # la cadena debe verificarse íntegra
+   ```
 
 ## 5. Rotación de secretos
 
@@ -86,8 +105,9 @@ Rote de inmediato ante cualquier sospecha de exposición, y en forma periódica 
 
 | Secreto | Procedimiento | Impacto |
 | --- | --- | --- |
-| `db_runtime_password` / `db_owner_password` | `dc exec postgres psql -U postgres -d enviotec -c "ALTER ROLE app_runtime PASSWORD '<nueva>'"` (o `app_owner`); actualizar el archivo y la URL (`database_url` / `migration_database_url`); `dc up -d --force-recreate backend worker` | Reinicio breve del backend y del worker |
-| `postgres_password` | `ALTER ROLE postgres PASSWORD '<nueva>'` y actualizar el archivo | Ninguno |
+| Logins de SQL Server (`database_url`, `migration_database_url`) | Generar una clave nueva (sección 3.3 del manual de despliegue) y escribirla en la URL; con `secrets/database_admin_url` presente: `COMPOSE_FILE=docker-compose.yml npm run db:provision -- --reset-passwords`; `dc up -d --force-recreate backend worker` | Reinicio breve del backend y del worker |
+| Login administrativo de SQL Server | Lo rota el equipo de base de datos; EnvioTec solo lo usa para aprovisionar | Ninguno |
+| `database_ca_cert` | Cuando la CA interna cambia o renueva el certificado de SQL Server: reemplazar el archivo; `dc up -d --force-recreate backend worker` | Reinicio breve |
 | `redis_*_password` y `redis_url_*` | Regenerar la contraseña y la URL del mismo usuario; `dc up -d --force-recreate redis backend worker file-processor` (Redis carga los usuarios ACL al arrancar) | Trabajos en curso se reintentan; los contadores de rate limiting se reinician |
 | `csrf_secret` | Reemplazar el archivo; `dc up -d --force-recreate backend` | Los usuarios recargan la página para obtener un token nuevo |
 | `data_encryption_key` | Con backend y worker detenidos: `dc stop backend worker`; `dc run --rm -v $PWD/secrets/data_encryption_key:/run/keys/old:ro -v $PWD/nueva_clave:/run/keys/new:ro tools node scripts/rotate-encryption-key.js --old /run/keys/old --new /run/keys/new`; reemplazar el secreto por la clave nueva; `dc up -d --wait` | Ninguno para los usuarios: los MFA siguen funcionando. La rotación es atómica y se audita (`security.key_rotation`) |

@@ -44,7 +44,7 @@ const unavailableQueue = {
 const REQUEST_TIMEOUT_MS = 30000;
 
 // Builds the application without listening, so tests can use app.inject().
-// `db` is the PostgreSQL pool (app_runtime), `redis` the Redis client and
+// `db` is the SQL Server database (runtime login, ADR-032), `redis` the Redis client and
 // `checks` the readiness checks for external dependencies. `mailer` and
 // `adClientFactory` let tests replace Mandrill and the LDAP connection.
 // `extraPlugins` are registered after the modules and go through the same

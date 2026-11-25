@@ -9,19 +9,20 @@ Este documento describe la arquitectura, el modelo de datos, el catálogo de per
 | Servicio | Función | Redes |
 | --- | --- | --- |
 | `nginx` | Proxy de borde: TLS (CA interna), archivos estáticos en `/`, `/api/*` al backend, headers de seguridad (ADR-001) | `edge` |
-| `backend` | Fastify, N réplicas sin estado | `edge`, `data`, `egress` |
-| `worker` | BullMQ: envíos, sincronización con Mandrill, vigencia de cuentas, revisión de AD, mantenimiento de particiones | `data`, `files`, `egress` |
+| `backend` | Fastify, N réplicas sin estado | `edge`, `data`, `egress`, `database` |
+| `worker` | BullMQ: envíos, sincronización con Mandrill, vigencia de cuentas, revisión de AD, mantenimiento de particiones | `data`, `egress`, `database` |
 | `file-processor` | Validación y conversión de .docx, CSV y PDF (ADR-004) | `files` |
 | `clamav` | Antivirus (`clamd`) | `files` |
 | `freshclam` | Actualización de firmas de ClamAV | `egress` |
 | `egress-proxy` | Única salida a internet, con allowlist de dominios (ADR-009) | `egress` + salida |
-| `postgres` | PostgreSQL 18 (ADR-010) | `data` |
+| SQL Server (externo) | Servidor de la organización, SQL Server 2022 (ADR-032); fuera del stack | `database` (red con salida, limitada por firewall al servidor y al puerto 1433) |
+| `tools` | Aprovisionamiento, migraciones, seeds y bootstrap; no queda corriendo | `database` |
 | `redis` | Colas y contadores; `noeviction` + AOF; usuarios ACL por servicio (ADR-003) | `data`, `files` |
 
 - La red `files` es `internal: true`: el procesador solo ve Redis y ClamAV.
 - El backend y el worker llegan al controlador de dominio por LDAPS a través de la red del host, restringido por firewall a la IP del controlador.
 - Los archivos pasan entre el worker y el procesador por un volumen compartido privado.
-- PostgreSQL y Redis no publican puertos en producción.
+- Redis no publica puertos en producción. La base de datos es externa: se llega a ella con TLS (certificado validado contra la CA interna en producción) y con dos logins de mínimo privilegio, dueño y ejecución (ADR-032).
 
 ```text
  Navegador
@@ -64,7 +65,7 @@ Este documento describe la arquitectura, el modelo de datos, el catálogo de per
 
 ## 3. Modelo de datos
 
-Convenciones (A4): PK UUIDv7 con `uuidv7()` de PostgreSQL 18; `timestamptz` en UTC; `created_at` y `updated_at` en tablas de negocio; FK con índice; integridad con `NOT NULL`, `UNIQUE` y `CHECK` en la BD. Todas las tablas de negocio tienen `area_id NOT NULL`.
+Convenciones (A4, ADR-032): PK `uniqueidentifier` con `NEWSEQUENTIALID()`; `datetime2(3)` en UTC; `created_at` y `updated_at` en tablas de negocio; FK con índice; integridad con `NOT NULL`, `UNIQUE` y `CHECK` en la BD. Todas las tablas de negocio tienen `area_id NOT NULL`.
 
 ### 3.1 Núcleo
 
@@ -167,8 +168,7 @@ Versiones exactas y `package-lock.json` versionado. La licencia y el estado de m
 | `@fastify/cookie` | Cookies con prefijo `__Host-` | Parseo manual propenso a errores | MIT |
 | `@fastify/multipart` | Subida de archivos con límites en streaming | Multipart manual es frágil | MIT |
 | `@fastify/rate-limit` | Rate limiting general con Redis | El límite por cuenta del login es lógica propia | MIT |
-| `pg` | Driver de PostgreSQL (A2) | — | MIT |
-| `node-pg-migrate` | Migraciones (A2) | — | MIT |
+| `mssql` | Driver de SQL Server (A2, ADR-032), sobre `tedious` | No hay cliente TDS nativo en Node | MIT |
 | `ioredis` | Cliente Redis (lo usa BullMQ) | — | MIT |
 | `bullmq` | Colas, reintentos, trabajos programados | Reimplementar una cola fiable no tiene sentido | MIT |
 | `ajv-formats` | Formatos `email`, `uuid`, `date-time` | Fastify trae ajv sin los formatos | MIT |
@@ -180,7 +180,7 @@ Versiones exactas y `package-lock.json` versionado. La licencia y el estado de m
 | `uqr` | QR (SVG) para enrolar el TOTP, en el backend | No compensa codificar QR a mano; reemplaza a `qrcode`, que arrastra `yargs` (ADR-021) | MIT |
 | `argon2` | Argon2id, solo si `crypto.argon2` de Node no es estable en la LTS elegida | Se verifica en la Fase 1 | MIT |
 
-Implementado con funcionalidad nativa: TOTP (RFC 6238 con `crypto`, probado con los vectores del RFC), cifrado AES-256-GCM, UUIDv7 (PostgreSQL 18), cliente de Mandrill (`fetch`), i18n (diccionarios JSON), cobertura (`node --test`).
+Implementado con funcionalidad nativa: TOTP (RFC 6238 con `crypto`, probado con los vectores del RFC), cifrado AES-256-GCM, runner de migraciones T-SQL (ADR-032), cliente de Mandrill (`fetch`), i18n (diccionarios JSON), cobertura (`node --test`).
 
 Solo de desarrollo: `eslint`, `eslint-plugin-security` (Apache-2.0), `eslint-plugin-no-unsanitized` (MPL-2.0), `pino-pretty`, `playwright-core` (Apache-2.0, verificación en navegador, ADR-021).
 

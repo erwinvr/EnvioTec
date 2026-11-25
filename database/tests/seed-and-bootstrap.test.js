@@ -21,15 +21,15 @@ describe('seed de sistema', () => {
   after(() => owner.end());
 
   it('es idempotente', async () => {
-    await inRollback(owner, async () => {
-      assert.deepEqual(await seedSystem(owner), { permissions: 0, roles: 0, settings: 0 });
+    await inRollback(owner, async (tx) => {
+      assert.deepEqual(await seedSystem(tx), { permissions: 0, roles: 0, settings: 0 });
     });
   });
 
   it('sincroniza todo el catálogo y superadmin tiene todos los permisos', async () => {
     const { rows } = await owner.query(
-      `SELECT (SELECT count(*) FROM permissions)::int AS catalog,
-              (SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.name = 'superadmin')::int AS superadmin`,
+      `SELECT (SELECT COUNT(*) FROM permissions) AS catalog,
+              (SELECT COUNT(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.name = 'superadmin') AS superadmin`,
     );
     assert.equal(rows[0].catalog, PERMISSION_CATALOG.length);
     assert.equal(rows[0].superadmin, PERMISSION_CATALOG.length);
@@ -37,7 +37,7 @@ describe('seed de sistema', () => {
 
   it('crea los roles iniciales y solo superadmin es de sistema', async () => {
     const { rows } = await owner.query(
-      'SELECT name, is_system, role_is_administrative(id) AS administrative FROM roles ORDER BY name',
+      'SELECT name, is_system, CAST(dbo.role_is_administrative(id) AS bit) AS administrative FROM roles ORDER BY name',
     );
     const byName = Object.fromEntries(rows.map((row) => [row.name, row]));
     for (const name of ['superadmin', 'administrador', 'operador', 'aprobador', 'auditoria', 'reportes']) {
@@ -51,17 +51,17 @@ describe('seed de sistema', () => {
   });
 
   it('falla si la base tiene un permiso que no está en el código', async () => {
-    await inRollback(owner, async () => {
-      await owner.query("INSERT INTO permissions (code, description) VALUES ('orphan.permission', 'x')");
-      await assert.rejects(seedSystem(owner), /orphan.permission/);
+    await inRollback(owner, async (tx) => {
+      await tx.query("INSERT INTO permissions (code, description) VALUES ('orphan.permission', 'x')");
+      await assert.rejects(seedSystem(tx), /orphan.permission/);
     });
   });
 
   it('no sobrescribe un parámetro modificado por un administrador', async () => {
-    await inRollback(owner, async () => {
-      await owner.query("UPDATE system_settings SET value = '60' WHERE key = 'local_account.default_validity_days'");
-      await seedSystem(owner);
-      const { rows } = await owner.query("SELECT value FROM system_settings WHERE key = 'local_account.default_validity_days'");
+    await inRollback(owner, async (tx) => {
+      await tx.query("UPDATE system_settings SET value = '60' WHERE [key] = 'local_account.default_validity_days'");
+      await seedSystem(tx);
+      const { rows } = await tx.query("SELECT value FROM system_settings WHERE [key] = 'local_account.default_validity_days'");
       assert.equal(rows[0].value, 60);
     });
   });
@@ -82,17 +82,17 @@ describe('bootstrap del superadmin', () => {
   });
 
   it('crea un superadmin local con vigencia y rechaza un segundo', async () => {
-    await inRollback(owner, async () => {
-      const result = await bootstrapAdmin(owner, VALID_INPUT);
-      const { rows } = await owner.query(
-        `SELECT u.auth_source, u.exempt_from_expiry, u.is_emergency, u.password_hash, u.expires_at > now() + interval '89 days' AS valid_90,
+    await inRollback(owner, async (tx) => {
+      const result = await bootstrapAdmin(tx, VALID_INPUT);
+      const { rows } = await tx.query(
+        `SELECT u.auth_source, u.exempt_from_expiry, u.is_emergency, u.password_hash, CAST(CASE WHEN u.expires_at > DATEADD(day, 89, SYSUTCDATETIME()) THEN 1 ELSE 0 END AS bit) AS valid_90,
                 r.name AS role
            FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE u.id = $1`,
         [result.userId],
       );
       assert.equal(rows[0].auth_source, 'local');
       assert.equal(rows[0].role, 'superadmin');
-      const { rows: audit } = await owner.query(
+      const { rows: audit } = await tx.query(
         "SELECT actor_type, result, metadata FROM audit_logs WHERE action = 'user.bootstrap' AND resource_id = $1",
         [result.userId],
       );
@@ -103,29 +103,29 @@ describe('bootstrap del superadmin', () => {
       assert.ok(!rows[0].password_hash.includes(VALID_INPUT.password));
 
       await assert.rejects(
-        bootstrapAdmin(owner, { ...VALID_INPUT, username: 'otro.admin', email: 'otro@example.test' }),
+        bootstrapAdmin(tx, { ...VALID_INPUT, username: 'otro.admin', email: 'otro@example.test' }),
         (error) => error instanceof BootstrapError && /Ya existe un superadmin/.test(error.message),
       );
     });
   });
 
   it('crea una única cuenta de emergencia exenta de vigencia', async () => {
-    await inRollback(owner, async () => {
+    await inRollback(owner, async (tx) => {
       const input = { ...VALID_INPUT, username: 'emergencia', email: 'emergencia@example.test' };
-      const result = await bootstrapAdmin(owner, input, { emergency: true });
-      const { rows } = await owner.query('SELECT is_emergency, exempt_from_expiry, expires_at FROM users WHERE id = $1', [result.userId]);
+      const result = await bootstrapAdmin(tx, input, { emergency: true });
+      const { rows } = await tx.query('SELECT is_emergency, exempt_from_expiry, expires_at FROM users WHERE id = $1', [result.userId]);
       assert.deepEqual(rows[0], { is_emergency: true, exempt_from_expiry: true, expires_at: null });
       await assert.rejects(
-        bootstrapAdmin(owner, { ...input, username: 'emergencia2', email: 'e2@example.test' }, { emergency: true }),
+        bootstrapAdmin(tx, { ...input, username: 'emergencia2', email: 'e2@example.test' }, { emergency: true }),
         /Ya existe una cuenta de emergencia/,
       );
     });
   });
 
   it('rechaza usuarios o emails ya usados', async () => {
-    await inRollback(owner, async () => {
-      await bootstrapAdmin(owner, VALID_INPUT, { emergency: true });
-      await assert.rejects(bootstrapAdmin(owner, { ...VALID_INPUT, email: 'x@example.test' }), /ya están en uso/);
+    await inRollback(owner, async (tx) => {
+      await bootstrapAdmin(tx, VALID_INPUT, { emergency: true });
+      await assert.rejects(bootstrapAdmin(tx, { ...VALID_INPUT, email: 'x@example.test' }), /ya están en uso/);
     });
   });
 });

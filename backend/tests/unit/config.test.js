@@ -7,6 +7,8 @@ import { describe, it } from 'node:test';
 import { ConfigError, loadConfig, parseTrustProxy } from '../../src/core/config/index.js';
 import { validEnv } from '../helpers/app.js';
 
+const CA = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
+
 function problemsOf(env, options) {
   try {
     loadConfig(env, options);
@@ -32,7 +34,7 @@ describe('loadConfig', () => {
   it('usa nivel de log silent en tests salvo que se indique otro', () => {
     assert.equal(loadConfig(validEnv()).logLevel, 'silent');
     assert.equal(loadConfig(validEnv({ LOG_LEVEL: 'warn' })).logLevel, 'warn');
-    assert.equal(loadConfig(validEnv({ NODE_ENV: 'production' })).logLevel, 'info');
+    assert.equal(loadConfig(validEnv({ NODE_ENV: 'production', DATABASE_CA_CERT: CA })).logLevel, 'info');
   });
 
   it('rechaza la falta de variables obligatorias', () => {
@@ -69,6 +71,22 @@ describe('loadConfig', () => {
     assert.ok(!problems.includes('topsecret'));
   });
 
+  it('SQL Server (ADR-032): URL sqlserver:// y certificado validado en producción', () => {
+    assert.match(problemsOf(validEnv({ DATABASE_URL: 'sqlserver://sin-clave@db/enviotec' })), /DATABASE_URL/);
+    assert.match(problemsOf(validEnv({ DATABASE_URL: "sqlserver://u:p@db/enviotec;DROP" })), /DATABASE_URL/);
+    const production = { NODE_ENV: 'production' };
+    assert.match(problemsOf(validEnv(production)), /DATABASE_CA_CERT: es obligatoria en producción/);
+    assert.match(problemsOf(validEnv({ ...production, DATABASE_TRUST_SERVER_CERTIFICATE: 'true' })),
+      /DATABASE_TRUST_SERVER_CERTIFICATE: no se admite en producción/);
+    const dir = mkdtempSync(join(tmpdir(), 'enviotec-ca-'));
+    writeFileSync(join(dir, 'ca.pem'), '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
+    const config = loadConfig(validEnv({ ...production, DATABASE_CA_CERT_FILE: join(dir, 'ca.pem'), DATABASE_SERVER_NAME: 'sql.empresa.local' }));
+    assert.deepEqual([config.database.trustServerCertificate, config.database.serverName], [false, 'sql.empresa.local']);
+    assert.match(config.database.caCert, /BEGIN CERTIFICATE/);
+    const development = loadConfig(validEnv({ NODE_ENV: 'development', DATABASE_TRUST_SERVER_CERTIFICATE: 'true' }));
+    assert.equal(development.database.trustServerCertificate, true);
+  });
+
   it('exige APP_ORIGIN https sin ruta', () => {
     assert.match(problemsOf(validEnv({ APP_ORIGIN: 'http://enviotec.test' })), /APP_ORIGIN/);
     assert.match(problemsOf(validEnv({ APP_ORIGIN: 'https://enviotec.test/app' })), /APP_ORIGIN/);
@@ -92,8 +110,8 @@ describe('loadConfig', () => {
 
   it('el perfil worker no exige ni expone secretos de la API', () => {
     const config = loadConfig({
-      NODE_ENV: 'production',
-      DATABASE_URL: 'postgres://app_runtime:pw@db/enviotec',
+      NODE_ENV: 'production', DATABASE_CA_CERT: CA,
+      DATABASE_URL: 'sqlserver://enviotec_runtime:pw@db/enviotec',
       REDIS_URL: 'redis://worker:pw@redis:6379/0',
       CSRF_SECRET: 'ignored',
     }, { profile: 'worker' });
@@ -104,12 +122,12 @@ describe('loadConfig', () => {
 
   it('la API de Mandrill solo por https; http únicamente hacia loopback y fuera de producción', () => {
     const worker = (env) => loadConfig({
-      NODE_ENV: 'development', DATABASE_URL: 'postgres://app_runtime:pw@db/enviotec', REDIS_URL: 'redis://worker:pw@redis:6379/0', ...env,
+      NODE_ENV: 'development', DATABASE_URL: 'sqlserver://enviotec_runtime:pw@db/enviotec', REDIS_URL: 'redis://worker:pw@redis:6379/0', ...env,
     }, { profile: 'worker' });
     assert.equal(worker({ MANDRILL_API_URL: 'http://127.0.0.1:9999/', MANDRILL_CAMPAIGNS_API_KEY: 'clave-de-campanias-de-prueba' }).sending.apiUrl, 'http://127.0.0.1:9999');
     assert.equal(worker({ MANDRILL_CAMPAIGNS_API_KEY: 'clave-de-campanias-de-prueba' }).sending.enabled, true);
     assert.throws(() => worker({ MANDRILL_API_URL: 'http://mandrill.evil.test' }), /MANDRILL_API_URL/);
-    assert.throws(() => worker({ NODE_ENV: 'production', MANDRILL_API_URL: 'http://127.0.0.1:9999' }), /MANDRILL_API_URL/);
+    assert.throws(() => worker({ NODE_ENV: 'production', DATABASE_CA_CERT: CA, MANDRILL_API_URL: 'http://127.0.0.1:9999' }), /MANDRILL_API_URL/);
   });
 
   it('rechaza perfiles desconocidos', () => {

@@ -29,18 +29,18 @@ describe('remitentes y cuotas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 
     operator = await h.localUser('operador', { roles: [h.roles.operador] });
     operatorToken = (await h.login(operator.username)).token;
     otherArea = await h.area('otra');
-    const { rows } = await h.owner.query("SELECT key, value FROM system_settings WHERE key IN ('sending.sender_domains', 'sending.reply_to_domains')");
+    const { rows } = await h.owner.query("SELECT [key], value FROM system_settings WHERE [key] IN ('sending.sender_domains', 'sending.reply_to_domains')");
     savedSettings = rows;
   });
   after(async () => {
     for (const row of savedSettings ?? []) {
-      await h.owner.query('UPDATE system_settings SET value = $2::jsonb WHERE key = $1', [row.key, JSON.stringify(row.value)]);
+      await h.owner.query('UPDATE system_settings SET value = $2 WHERE [key] = $1', [row.key, JSON.stringify(row.value)]);
     }
     await h?.close();
   });
 
   const setDomains = (senders, replyTo) => h.owner.query(
-    "UPDATE system_settings SET value = CASE key WHEN 'sending.sender_domains' THEN $1::jsonb ELSE $2::jsonb END WHERE key IN ('sending.sender_domains', 'sending.reply_to_domains')",
+    "UPDATE system_settings SET value = CASE [key] WHEN 'sending.sender_domains' THEN $1 ELSE $2 END WHERE [key] IN ('sending.sender_domains', 'sending.reply_to_domains')",
     [JSON.stringify(senders), JSON.stringify(replyTo)],
   );
 
@@ -74,7 +74,7 @@ describe('remitentes y cuotas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 
     const adjust = (delta, token = adminToken, userId = operator.id) => call('POST', `/api/v1/quotas/${userId}/adjust`, { delta, reason: REASON }, token);
     const res = await adjust(500);
     assert.deepEqual(res.json().data, { assigned: 500, reserved: 0, consumed: 0, available: 500 });
-    const self = await h.owner.query('SELECT s.user_id FROM sessions s JOIN user_roles ur ON ur.user_id = s.user_id WHERE ur.role_id = $1 LIMIT 1', [h.roles.admin]);
+    const self = await h.owner.query('SELECT TOP (1) s.user_id FROM sessions s JOIN user_roles ur ON ur.user_id = s.user_id WHERE ur.role_id = $1', [h.roles.admin]);
     assert.equal((await adjust(10, adminToken, self.rows[0].user_id)).statusCode, 409);
     assert.equal((await call('POST', `/api/v1/quotas/${operator.id}/adjust`, { delta: 10, reason: 'corto' })).statusCode, 422);
     assert.equal((await adjust(0)).statusCode, 422);
@@ -126,27 +126,23 @@ describe('remitentes y cuotas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 
     const service = quotas();
     const user = await h.localUser('tope');
     await call('POST', `/api/v1/quotas/${user.id}/adjust`, { delta: 10, reason: REASON });
-    const { rows } = await h.owner.query("SELECT value FROM system_settings WHERE key = 'sending.monthly_global_cap'");
+    const { rows } = await h.owner.query("SELECT value FROM system_settings WHERE [key] = 'sending.monthly_global_cap'");
     const usage = (await call('GET', '/api/v1/quotas/global')).json().data;
-    await h.owner.query("UPDATE system_settings SET value = $1::jsonb WHERE key = 'sending.monthly_global_cap'", [JSON.stringify(usage.sent + 1)]);
+    await h.owner.query("UPDATE system_settings SET value = $1 WHERE [key] = 'sending.monthly_global_cap'", [JSON.stringify(usage.sent + 1)]);
     try {
       await assert.rejects(withTransaction(h.pool, (client) => service.consume(client, { userId: user.id, amount: 2, fromReserve: false })),
         (e) => e.code === 'GLOBAL_CAP_REACHED');
       const { rows: q } = await h.owner.query('SELECT consumed FROM quotas WHERE user_id = $1', [user.id]);
       assert.equal(q[0].consumed, 0, 'nada se consumió');
     } finally {
-      await h.owner.query("UPDATE system_settings SET value = $1::jsonb WHERE key = 'sending.monthly_global_cap'", [JSON.stringify(rows[0].value)]);
+      await h.owner.query("UPDATE system_settings SET value = $1 WHERE [key] = 'sending.monthly_global_cap'", [JSON.stringify(rows[0].value)]);
     }
   });
 
   it('el historial de movimientos es inmodificable, incluso para el dueño de las tablas', async () => {
-    await h.owner.query('BEGIN');
-    try {
-      await assert.rejects(h.owner.query('UPDATE quota_movements SET amount = 1'), /append-only/);
-    } finally {
-      await h.owner.query('ROLLBACK');
-    }
-    await assert.rejects(h.pool.query('DELETE FROM quota_movements'), /permission denied|append-only/);
+    // The INSTEAD OF trigger rejects the statement before it changes anything.
+    await assert.rejects(h.owner.query('UPDATE quota_movements SET amount = 1'), /append-only/);
+    await assert.rejects(h.pool.query('DELETE FROM quota_movements'), /permission was denied|append-only/);
     await assert.rejects(h.owner.query("UPDATE quotas SET reserved = assigned + 1 WHERE user_id = $1", [operator.id]), /quotas_within_assigned/);
   });
 });

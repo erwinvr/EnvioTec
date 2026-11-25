@@ -1,8 +1,31 @@
 # Check environment for scripts/check.sh: the production-like stack without
-# published ports, plus a test container that reaches every internal network.
+# published ports, plus a test container that reaches every internal network,
+# and a SQL Server of its own (development and production use the
+# organization's server, ADR-032).
 services:
   nginx:
     ports: !reset []
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
+    entrypoint: ["/bin/sh", "/usr/local/bin/enviotec-start.sh"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+    volumes:
+      - ./infra/sqlserver/start.sh:/usr/local/bin/enviotec-start.sh:ro
+    secrets: [database_admin_password, sqlserver_tls_cert, sqlserver_tls_key]
+    networks: [database]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$(cat /run/secrets/database_admin_password)\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "2.00", memory: 2G }
 
   tests:
     read_only: true
@@ -21,6 +44,8 @@ services:
       RUN_INTEGRATION: "1"
       DATABASE_URL_FILE: /run/secrets/database_url
       MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+      DATABASE_CA_CERT_FILE: /run/secrets/database_ca_cert
+      DATABASE_SERVER_NAME: sqlserver
       REDIS_URL_FILE: /run/secrets/redis_url_backend
       CSRF_SECRET_FILE: /run/secrets/csrf_secret
       DATA_ENCRYPTION_KEY_FILE: /run/secrets/data_encryption_key
@@ -35,8 +60,8 @@ services:
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
     volumes:
       - filestore:/data/files
-    secrets: [database_url, migration_database_url, redis_url_backend, csrf_secret, data_encryption_key, tls_cert]
-    networks: [edge, data, egress, files]
+    secrets: [database_url, migration_database_url, database_ca_cert, redis_url_backend, csrf_secret, data_encryption_key, tls_cert]
+    networks: [edge, data, egress, files, database]
     depends_on:
       nginx:
         condition: service_healthy
@@ -46,13 +71,15 @@ services:
         condition: service_started
 
   # Database tests (database/tests) run in the tools image, which contains the
-  # migrations and seeds. They need the owner and the runtime connections.
+  # migrations and seeds. They need the owner and the runtime connections;
+  # provisioning, the administrative one of the check SQL Server.
   tools:
     profiles: [tools, check]
     environment:
       NODE_ENV: test
       DATABASE_URL_FILE: /run/secrets/database_url
-    secrets: [migration_database_url, database_url]
+      DATABASE_ADMIN_URL_FILE: /run/secrets/database_admin_url
+    secrets: [migration_database_url, database_url, database_ca_cert, database_admin_url]
 
   # Browser check of the frontend (phase 7): official Playwright image, used
   # only here, like Trivy. It reaches nginx on the edge network.
@@ -73,6 +100,20 @@ services:
     depends_on:
       nginx:
         condition: service_healthy
+
+secrets:
+  database_admin_password: { file: "${SECRETS_DIR:-./secrets}/database_admin_password" }
+  database_admin_url: { file: "${SECRETS_DIR:-./secrets}/database_admin_url" }
+  sqlserver_tls_cert: { file: "${SECRETS_DIR:-./secrets}/sqlserver_tls_cert" }
+  sqlserver_tls_key: { file: "${SECRETS_DIR:-./secrets}/sqlserver_tls_key" }
+
+networks:
+  # The check SQL Server lives inside the stack: the database network needs
+  # no route out, so it is internal here (the egress test proves it). In
+  # development and production it reaches the organization's server, and the
+  # host firewall limits it to that server's port.
+  database:
+    internal: true
 
 volumes:
   # ClamAV signatures survive between runs (about 300 MB to download).

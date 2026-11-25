@@ -1,3 +1,4 @@
+import { createAuditService } from '../../../backend/src/core/audit/audit.service.js';
 import { hashPassword } from '../../../backend/src/core/auth/password.js';
 import { checkPassword } from '../../../backend/src/core/auth/password-policy.js';
 
@@ -41,55 +42,60 @@ export async function bootstrapAdmin(client, input, { emergency = false, argon2 
   const problems = validateBootstrapInput(input);
   if (problems.length > 0) throw new BootstrapError(problems);
 
-  const { rows: roleRows } = await client.query("SELECT id FROM roles WHERE name = 'superadmin' AND is_system");
+  const { rows: roleRows } = await client.query("SELECT id FROM roles WHERE name = 'superadmin' AND is_system = 1");
   if (roleRows.length === 0) throw new BootstrapError(['Falta el rol superadmin: ejecute primero el seed de sistema.']);
   const roleId = roleRows[0].id;
 
   if (emergency) {
-    const { rowCount } = await client.query('SELECT 1 FROM users WHERE is_emergency AND deleted_at IS NULL');
-    if (rowCount > 0) throw new BootstrapError(['Ya existe una cuenta de emergencia.']);
+    const { rows } = await client.query('SELECT 1 AS found FROM users WHERE is_emergency = 1 AND deleted_at IS NULL');
+    if (rows.length > 0) throw new BootstrapError(['Ya existe una cuenta de emergencia.']);
   } else {
-    const { rowCount } = await client.query(
-      `SELECT 1 FROM users u JOIN user_roles ur ON ur.user_id = u.id
-        WHERE ur.role_id = $1 AND u.deleted_at IS NULL AND NOT u.is_emergency`,
+    const { rows } = await client.query(
+      `SELECT 1 AS found FROM users u JOIN user_roles ur ON ur.user_id = u.id
+        WHERE ur.role_id = $1 AND u.deleted_at IS NULL AND u.is_emergency = 0`,
       [roleId],
     );
-    if (rowCount > 0) throw new BootstrapError(['Ya existe un superadmin. Los demás usuarios se crean desde la aplicación.']);
+    if (rows.length > 0) throw new BootstrapError(['Ya existe un superadmin. Los demás usuarios se crean desde la aplicación.']);
   }
 
-  const { rowCount: taken } = await client.query(
-    'SELECT 1 FROM users WHERE username = $1 OR email = $2',
+  const { rows: taken } = await client.query(
+    'SELECT 1 AS found FROM users WHERE username = $1 OR email = $2',
     [input.username, input.email],
   );
-  if (taken > 0) throw new BootstrapError(['El usuario o el email ya están en uso.']);
+  if (taken.length > 0) throw new BootstrapError(['El usuario o el email ya están en uso.']);
 
-  await client.query('INSERT INTO areas (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [input.areaName]);
+  await client.query(
+    'IF NOT EXISTS (SELECT 1 FROM areas WITH (UPDLOCK, HOLDLOCK) WHERE name = $1) INSERT INTO areas (name) VALUES ($1)',
+    [input.areaName],
+  );
   const { rows: areaRows } = await client.query('SELECT id FROM areas WHERE name = $1', [input.areaName]);
 
   const { rows: settingRows } = await client.query(
-    "SELECT (value #>> '{}')::integer AS days FROM system_settings WHERE key = 'local_account.default_validity_days'",
+    "SELECT CAST(value AS int) AS days FROM system_settings WHERE [key] = 'local_account.default_validity_days'",
   );
   if (!emergency && settingRows.length === 0) {
     throw new BootstrapError(['Faltan los parámetros del sistema: ejecute primero el seed de sistema.']);
   }
 
   const passwordHash = await hashPassword(input.password, argon2);
+  // users has a guard trigger: OUTPUT through a table variable.
   const { rows: userRows } = await client.query(
-    `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, password_changed_at,
+    `DECLARE @out TABLE (id uniqueidentifier, expires_at datetime2(3));
+     INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, password_changed_at,
                         expires_at, exempt_from_expiry, is_emergency)
-     VALUES ($1, $2, $3, 'local', $4, $5, now(),
-             CASE WHEN $6 THEN NULL ELSE now() + make_interval(days => $7) END, $6, $6)
-     RETURNING id, expires_at`,
+     OUTPUT inserted.id, inserted.expires_at INTO @out
+     VALUES ($1, $2, $3, 'local', $4, $5, SYSUTCDATETIME(),
+             CASE WHEN $6 = 1 THEN NULL ELSE DATEADD(day, $7, SYSUTCDATETIME()) END, $6, $6);
+     SELECT id, expires_at FROM @out;`,
     [input.username, input.email, input.displayName, passwordHash, areaRows[0].id, emergency,
       emergency ? 0 : settingRows[0].days],
   );
   await client.query("INSERT INTO user_roles (user_id, role_id, source) VALUES ($1, $2, 'manual')", [userRows[0].id, roleId]);
   // Audited in the same transaction (A7): the account and its event exist together or not at all.
-  await client.query(
-    `SELECT append_audit_log('system', NULL, NULL, 'user.bootstrap', 'user', $1, 'success', NULL, NULL, NULL,
-                             jsonb_build_object('emergency', $2::boolean, 'role', 'superadmin'))`,
-    [userRows[0].id, emergency],
-  );
+  await createAuditService().record(client, {
+    actor: { type: 'system' }, action: 'user.bootstrap', resourceType: 'user', resourceId: userRows[0].id, result: 'success',
+    metadata: { emergency, role: 'superadmin' },
+  });
 
   return { userId: userRows[0].id, expiresAt: userRows[0].expires_at };
 }

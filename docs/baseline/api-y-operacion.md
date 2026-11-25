@@ -72,9 +72,9 @@ Se entrega `.env.example` con valores de ejemplo no funcionales. `.env` está en
 
 - Dockerfile **multi-stage**, imagen base mínima y fijada por versión (idealmente por digest).
 - El contenedor corre como **usuario no root**, con `read_only: true` y `tmpfs` solo donde haga falta, `cap_drop: [ALL]` y `no-new-privileges`.
-- Healthchecks en backend, PostgreSQL y Redis; el backend espera a que la base esté lista.
-- Redes separadas: el proxy ve al backend; solo el backend ve a PostgreSQL y Redis. Sin puertos de base de datos publicados en producción.
-- Volúmenes nombrados para los datos de PostgreSQL.
+- Healthchecks en backend y Redis; el backend comprueba la base de datos en `/health/ready`.
+- Redes separadas: el proxy ve al backend; solo el backend y el worker ven a Redis y a la base de datos (esta, por una red dedicada que el firewall limita al servidor de la organización). Sin puertos de base de datos publicados en producción.
+- Volúmenes nombrados para los datos de Redis y los archivos; la base de datos la respalda el equipo de bases de datos de la organización.
 - `docker-compose.yml` sin secretos reales; `docker-compose.override.yml` solo para desarrollo (puertos locales, recarga en caliente).
 - Las migraciones se ejecutan como un paso o contenedor separado con `MIGRATION_DATABASE_URL`, no al arrancar cada réplica.
 - Límites de memoria y CPU por servicio.
@@ -90,7 +90,7 @@ Se entrega `.env.example` con valores de ejemplo no funcionales. `.env` está en
 
 1. `npm ci`
 2. Lint (incluye reglas de seguridad del frontend y `eslint-plugin-security` en el backend)
-3. Tests unitarios, de integración y de seguridad, con PostgreSQL y Redis reales en contenedores
+3. Tests unitarios, de integración y de seguridad, con SQL Server y Redis reales en contenedores
 4. Cobertura mínima definida (por ejemplo 80% en `core/` y services)
 5. `npm audit --audit-level=high` o una herramienta SCA equivalente
 6. Detección de secretos en el repositorio (gitleaks o equivalente)

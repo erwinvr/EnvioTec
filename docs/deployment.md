@@ -2,6 +2,11 @@
 
 Cómo instalar EnvioTec desde cero en un **ambiente de desarrollo** y en un **ambiente de producción**. La operación diaria posterior (actualizaciones, respaldos, rotación de secretos, incidentes) está en [runbook.md](runbook.md).
 
+La base de datos es el **SQL Server de la organización** (ADR-032), fuera del stack de Docker. EnvioTec usa dos logins de mínimo privilegio, que se crean una sola vez por ambiente con un login administrativo:
+
+- **dueño** (`<base>_owner`): migraciones, seeds y bootstrap;
+- **ejecución** (`<base>_runtime`): la aplicación.
+
 Todos los comandos se ejecutan desde la raíz del repositorio.
 
 ## Contenido
@@ -15,7 +20,7 @@ Todos los comandos se ejecutan desde la raíz del repositorio.
 
 ## 1. Diferencias entre los ambientes
 
-Los dos ambientes usan los mismos contenedores y la misma red interna. Cambia lo que agrega `docker-compose.override.yml`, que Docker Compose aplica **solo** cuando se ejecuta `docker compose` sin `-f`.
+Los dos ambientes usan los mismos contenedores y las mismas redes. Cambia lo que agrega `docker-compose.override.yml`, que Docker Compose aplica **solo** cuando se ejecuta `docker compose` sin `-f`.
 
 | Aspecto | Desarrollo | Producción |
 | --- | --- | --- |
@@ -23,9 +28,10 @@ Los dos ambientes usan los mismos contenedores y la misma red interna. Cambia lo
 | `NODE_ENV` | `development` | `production` |
 | Código del backend | Montado desde `backend/src`, con recarga automática (`--watch`) | Copiado en la imagen |
 | Logs | `debug`, legibles | `info`, JSON |
-| PostgreSQL y Redis | Publicados en `127.0.0.1:5432` y `127.0.0.1:6379` | Sin puertos publicados |
+| Base de datos | Base `enviotec` en el SQL Server de la organización; se acepta su certificado autofirmado | Base propia en el SQL Server de producción; el certificado **se valida** contra la CA interna (`database_ca_cert`) |
+| Redis | Publicado en `127.0.0.1:6379` | Sin puertos publicados |
 | Secretos | Aleatorios, generados con `npm run secrets:dev` | Generados por el operador (sección 3.3); nunca los de desarrollo |
-| Certificado TLS | Autofirmado (`CN=localhost`) | Emitido por la CA interna para el nombre del servidor |
+| Certificado TLS de nginx | Autofirmado (`CN=localhost`) | Emitido por la CA interna para el nombre del servidor |
 | Datos de ejemplo | `seed.js dev` (áreas de ejemplo) | Prohibido: el script se niega con `NODE_ENV=production` |
 | Envío por Mandrill | Opcional, solo con la key de campañas en `secrets/` | Keys de sistema y de campañas, después del spike (runbook, sección 10) |
 | Active Directory | Deshabilitado (`AD_ENABLED=false`) | Opcional, con `docker-compose.ad.yml` (sección 3.4) |
@@ -40,9 +46,10 @@ Los dos ambientes usan los mismos contenedores y la misma red interna. Cambia lo
 | --- | --- | --- |
 | Docker Engine + Compose v2 | Docker 24 o superior, Compose 2.24 o superior | Todo el stack |
 | Node.js | 22.13 o superior | Solo en el host, para lint, tests del frontend y `npm run check`. El backend corre en Node.js 26 dentro del contenedor |
-| `openssl` | Cualquiera reciente | Generar los secretos y el certificado |
+| `openssl` | Cualquiera reciente | Generar los secretos y los certificados |
 | `git` | Cualquiera reciente | Clonar el repositorio |
-| Memoria | 6 GB libres como mínimo | ClamAV solo usa hasta 2 GB |
+| Memoria | 6 GB libres como mínimo (8 GB para `npm run check`, que levanta su propio SQL Server) | ClamAV usa hasta 2 GB |
+| SQL Server | 2022 o posterior, alcanzable en el puerto 1433 | Un login administrativo solo para el aprovisionamiento |
 
 ### 2.2 Instalación inicial
 
@@ -53,42 +60,60 @@ Los dos ambientes usan los mismos contenedores y la misma red interna. Cambia lo
    npm ci
    ```
 
-2. **Generar los secretos de desarrollo** (contraseñas aleatorias y certificado autofirmado en `./secrets`, que Git ignora):
+2. **Generar los secretos de desarrollo** (contraseñas aleatorias, URLs de la base y certificado autofirmado en `./secrets`, que Git ignora). `DB_HOST` es el servidor de base de datos:
 
    ```bash
-   npm run secrets:dev
+   DB_HOST=192.168.200.108 npm run secrets:dev
    ```
 
-3. **Crear el archivo de la key de campañas.** El override de desarrollo lo declara como secreto del worker, y Compose no arranca si el archivo no existe. Vacío, el envío queda deshabilitado:
+   Se generan `migration_database_url` (login `enviotec_owner`) y `database_url` (login `enviotec_runtime`), ambas hacia la base `enviotec`.
+
+3. **Escribir la credencial administrativa**, solo para el aprovisionamiento. La escribe quien administra el servidor, directamente en el archivo y sin pegarla en chats ni tickets:
+
+   ```bash
+   nano secrets/database_admin_url    # sqlserver://<login administrativo>:<clave>@192.168.200.108:1433/master
+   chmod 644 secrets/database_admin_url
+   ```
+
+   Si la clave tiene caracteres especiales (`@`, `:`, `/`, `%`), van codificados (`%40`, `%3A`, `%2F`, `%25`).
+
+4. **Crear el archivo de la key de campañas.** El override de desarrollo lo declara como secreto del worker, y Compose no arranca si el archivo no existe. Vacío, el envío queda deshabilitado:
 
    ```bash
    touch secrets/mandrill_campaigns_api_key
    ```
 
-4. **Configurar el origen** solo si va a entrar desde otra máquina. Cree `.env` (Git lo ignora) con la URL exacta que usará el navegador; si no coincide, el backend rechaza los formularios por CSRF:
+5. **Configurar el origen** solo si va a entrar desde otra máquina. Cree `.env` (Git lo ignora) con la URL exacta que usará el navegador; si no coincide, el backend rechaza los formularios por CSRF:
 
    ```bash
    echo 'APP_ORIGIN=https://192.168.200.103' > .env      # IP o nombre del equipo de desarrollo
    ```
 
-   Las demás variables y sus valores por defecto están en [.env.example](../.env.example).
+6. **Aprovisionar la base** (una vez). Crea la base `enviotec`, los logins dueño y de ejecución y el rol `app_runtime`, y activa read committed snapshot:
 
-5. **Levantar el stack.** La primera vez tarda varios minutos, porque ClamAV descarga sus firmas antes de quedar sano:
+   ```bash
+   npm run db:provision
+   ```
+
+   Después puede borrar `secrets/database_admin_url`: la aplicación no lo usa.
+
+7. **Crear el esquema y los datos iniciales:**
+
+   ```bash
+   docker compose build tools
+   docker compose run --rm tools node scripts/migrate.js up      # esquema (login dueño)
+   docker compose run --rm tools node scripts/seed.js system     # permisos, roles y parámetros
+   docker compose run --rm tools node scripts/seed.js dev        # áreas de ejemplo
+   ```
+
+8. **Levantar el stack.** La primera vez tarda varios minutos, porque ClamAV descarga sus firmas:
 
    ```bash
    docker compose up -d --build --wait
    docker compose ps          # todos los servicios en "healthy" o "running"
    ```
 
-6. **Crear la base de datos y los datos iniciales:**
-
-   ```bash
-   docker compose run --rm tools node scripts/migrate.js up      # esquema (usuario app_owner)
-   docker compose run --rm tools node scripts/seed.js system     # permisos, roles y parámetros
-   docker compose run --rm tools node scripts/seed.js dev        # áreas de ejemplo
-   ```
-
-7. **Crear el superadministrador.** El script pide usuario, email, nombre, área (la crea si no existe) y contraseña, sin mostrarla:
+9. **Crear el superadministrador.** El script pide usuario, email, nombre, área (la crea si no existe) y contraseña, sin mostrarla:
 
    ```bash
    docker compose run --rm -it tools node scripts/bootstrap-admin.js
@@ -96,13 +121,13 @@ Los dos ambientes usan los mismos contenedores y la misma red interna. Cambia lo
 
    Opcionalmente, la cuenta de emergencia: `... bootstrap-admin.js --emergency`.
 
-8. **Entrar:** abra `https://localhost` (o la URL de `APP_ORIGIN`). El navegador advierte sobre el certificado autofirmado: acéptelo o importe `secrets/tls_cert`. En el primer ingreso, el superadmin configura el MFA (TOTP) y guarda sus códigos de recuperación.
+10. **Entrar:** abra `https://localhost` (o la URL de `APP_ORIGIN`). El navegador advierte sobre el certificado autofirmado: acéptelo o importe `secrets/tls_cert`. En el primer ingreso, el superadmin configura el MFA (TOTP) y guarda sus códigos de recuperación.
 
-9. **Comprobar la salud:**
+11. **Comprobar la salud:**
 
-   ```bash
-   curl --cacert secrets/tls_cert https://localhost/health/ready
-   ```
+    ```bash
+    curl --cacert secrets/tls_cert https://localhost/health/ready
+    ```
 
 ### 2.3 Trabajo diario
 
@@ -120,9 +145,8 @@ Comandos útiles:
 docker compose logs -f backend worker            # logs
 docker compose run --rm tools node scripts/audit-verify.js   # cadena de auditoría
 npm run lint && npm run test:frontend            # chequeos rápidos en el host
-npm run check                                    # verificación completa (stack aislado, no toca el de desarrollo)
-docker compose down                              # detener, conservando los datos
-docker compose down -v                           # detener y borrar la base, Redis y los archivos
+npm run check                                    # verificación completa, con su propio SQL Server (no toca el de desarrollo)
+docker compose down                              # detener; los datos quedan en SQL Server
 ```
 
 ### 2.4 Envío real con Mandrill (opcional)
@@ -139,18 +163,17 @@ Sin la key de campañas, las campañas y los envíos de prueba terminan como fal
 2. En *Parámetros*, configure los dominios internos permitidos para envíos de prueba.
 3. Envíe primero una prueba a su propio correo. Los destinatarios reales reciben correo de verdad, también desde desarrollo.
 
-> **Cuidado:** `npm run secrets:dev -- --force` borra el directorio `secrets/` completo, incluida la key de Mandrill. Vuelva a crearla después.
+### 2.5 Regenerar los secretos
 
-### 2.5 Regenerar los secretos o empezar de cero
+`--force` conserva las keys de Mandrill y la URL administrativa, y genera claves nuevas para los logins. Después hay que cambiarlas en el servidor:
 
 ```bash
-npm run secrets:dev -- --force
-touch secrets/mandrill_campaigns_api_key
-docker compose down -v                 # PostgreSQL solo lee las contraseñas al crear su volumen
-docker compose up -d --build --wait
+DB_HOST=192.168.200.108 npm run secrets:dev -- --force
+npm run db:provision -- --reset-passwords
+docker compose up -d --force-recreate backend worker
 ```
 
-Después, repita los pasos 6 a 8 de la sección 2.2.
+Para empezar de cero, el administrador de la base borra la base `enviotec` y los logins `enviotec_owner` y `enviotec_runtime`. Después se repiten los pasos 6 a 9 de la sección 2.2.
 
 ---
 
@@ -164,18 +187,20 @@ alias dc='docker compose -f docker-compose.yml'
 
 Si usa los archivos adicionales de la sección 3.4, agréguelos al alias, por ejemplo `-f docker-compose.yml -f docker-compose.mandrill.yml -f docker-compose.ad.yml`.
 
-### 3.1 Requisitos del servidor
+### 3.1 Requisitos
 
 | Requisito | Detalle |
 | --- | --- |
-| Sistema | Linux x86_64 con Docker Engine 24 o superior y Compose 2.24 o superior. No requiere Node.js |
-| Recursos | 4 vCPU, 8 GB de RAM y disco SSD para la base y los archivos (los límites de los contenedores suman unos 6 GB) |
+| Servidor de aplicación | Linux x86_64 con Docker Engine 24 o superior y Compose 2.24 o superior. No requiere Node.js. 4 vCPU, 8 GB de RAM y disco para los archivos (los límites de los contenedores suman unos 5 GB) |
 | Usuario operador | Cuenta personal del grupo `docker`, no root. El repositorio y `secrets/` le pertenecen |
-| Nombre y certificado | Un nombre DNS interno (por ejemplo `enviotec.empresa.local`) y un certificado de la CA interna con ese nombre en el `subjectAltName` |
+| SQL Server | 2022 con la **última actualización acumulativa** instalada (R18), alcanzable desde el servidor de aplicación por el puerto 1433. Lo administra el equipo de base de datos |
+| Certificado de SQL Server | Emitido por la CA interna con el nombre del servidor de base en el `subjectAltName` (R19). Con el certificado autogenerado (`SSL_Self_Signed_Fallback`), producción no arranca |
+| Login administrativo | Uno nominal del equipo de base de datos, solo para el aprovisionamiento; nunca `sa` con una clave compartida (R20) |
+| Nombre y certificado de la aplicación | Un nombre DNS interno (por ejemplo `enviotec.empresa.local`) y un certificado de la CA interna con ese nombre en el `subjectAltName` |
 | Red de entrada | Solo la red interna llega a los puertos 443 y 80 (80 solo redirige a https). Ningún otro puerto se expone |
-| Red de salida | Solo el proxy de egreso sale a internet, hacia `mandrillapp.com` y `database.clamav.net` (sección 3.5) |
+| Red de salida | El proxy de egreso sale a internet solo hacia `mandrillapp.com` y `database.clamav.net`; la red `database` solo hacia SQL Server, puerto 1433 (sección 3.5) |
 | Active Directory | Si se usa: el puerto 636 (LDAPS) del controlador de dominio, alcanzable desde el servidor |
-| Respaldos | Un destino fuera del servidor, cifrado y con acceso restringido (runbook, sección 4) |
+| Respaldos | La base, con las herramientas de SQL Server del equipo de base de datos; los archivos (volumen `filestore`), a un destino fuera del servidor, cifrado y con acceso restringido (runbook, sección 4) |
 
 ### 3.2 Preparar el servidor
 
@@ -193,28 +218,31 @@ LOG_LEVEL=info
 HTTPS_PORT=443
 HTTP_PORT=80
 SECRETS_DIR=./secrets
+DATABASE_SERVER_NAME=sql.empresa.local
 EOF
 ```
 
-Si la subred `172.31.10.0/24` ya se usa en su red, cambie `EDGE_SUBNET` y `NGINX_IP` (la IP de nginx debe estar dentro de la subred).
+- `DATABASE_SERVER_NAME` es el nombre que figura en el certificado de SQL Server. La URL de conexión puede usar la IP o ese mismo nombre.
+- Si la subred `172.31.10.0/24` ya se usa en su red, cambie `EDGE_SUBNET` y `NGINX_IP` (la IP de nginx debe estar dentro de la subred).
 
 ### 3.3 Generar los secretos
 
 Cada secreto es un archivo, sin salto de línea final, en `SECRETS_DIR`. **No use `npm run secrets:dev`**: genera un certificado autofirmado.
 
-Permisos: el directorio es `700` y solo el operador puede entrar. Los archivos son `644`, porque Docker Compose (fuera de Swarm) monta los secretos con los permisos del host, y los contenedores leen con usuarios sin privilegios (`postgres`, `node`, `nginx`). Con `600` PostgreSQL no arranca.
+Permisos: el directorio es `700` y solo el operador puede entrar. Los archivos son `644`, porque Docker Compose (fuera de Swarm) monta los secretos con los permisos del host, y los contenedores leen con usuarios sin privilegios (`node`, `nginx`).
 
 ```bash
 mkdir -p secrets && chmod 700 secrets
 write() { printf '%s' "$2" > "secrets/$1"; chmod 644 "secrets/$1"; }
 hex() { openssl rand -hex 32; }
+# Política de claves de SQL Server: mayúsculas, minúsculas y dígitos, sin
+# caracteres que haya que codificar en la URL.
+sqlpw() { printf '%sAa1' "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 36)"; }
 
-pg=$(hex); owner=$(hex); runtime=$(hex); rb=$(hex); rw=$(hex); rf=$(hex)
-write postgres_password "$pg"
-write db_owner_password "$owner"
-write db_runtime_password "$runtime"
-write database_url "postgres://app_runtime:${runtime}@postgres:5432/enviotec"
-write migration_database_url "postgres://app_owner:${owner}@postgres:5432/enviotec"
+db_host=sql.empresa.local; db=enviotec
+owner=$(sqlpw); runtime=$(sqlpw); rb=$(hex); rw=$(hex); rf=$(hex)
+write migration_database_url "sqlserver://${db}_owner:${owner}@${db_host}:1433/${db}"
+write database_url "sqlserver://${db}_runtime:${runtime}@${db_host}:1433/${db}"
 write redis_backend_password "$rb"
 write redis_worker_password "$rw"
 write redis_files_password "$rf"
@@ -223,15 +251,23 @@ write redis_url_worker "redis://worker:${rw}@redis:6379/0"
 write redis_url_files "redis://files:${rf}@redis:6379/0"
 write csrf_secret "$(openssl rand -base64 48 | tr -d '\n')"
 write data_encryption_key "$(openssl rand -base64 32 | tr -d '\n')"
-unset pg owner runtime rb rw rf
+unset owner runtime rb rw rf
 ```
 
-Certificado de la CA interna, con la cadena intermedia a continuación del certificado del servidor:
+Certificados de la CA interna: el de la aplicación con su cadena, y la CA que firmó el certificado de SQL Server:
 
 ```bash
 cp /ruta/enviotec.empresa.local.fullchain.pem secrets/tls_cert
 cp /ruta/enviotec.empresa.local.key secrets/tls_key
-chmod 644 secrets/tls_cert secrets/tls_key
+cp /ruta/ca-interna.pem secrets/database_ca_cert
+chmod 644 secrets/tls_cert secrets/tls_key secrets/database_ca_cert
+```
+
+La credencial administrativa solo para el aprovisionamiento (sección 3.6):
+
+```bash
+nano secrets/database_admin_url    # sqlserver://<login administrativo>:<clave>@sql.empresa.local:1433/master
+chmod 644 secrets/database_admin_url
 ```
 
 Reglas:
@@ -253,23 +289,24 @@ services:
       MANDRILL_SYSTEM_API_KEY_FILE: /run/secrets/mandrill_system_api_key
       MAIL_FROM: no-reply@envios.empresa.com        # del subdominio de envío verificado
       MAIL_FROM_NAME: EnvioTec
-    secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key, mandrill_system_api_key]
+    secrets: [mandrill_system_api_key]
   worker:
     environment:
       MANDRILL_SYSTEM_API_KEY_FILE: /run/secrets/mandrill_system_api_key
       MANDRILL_CAMPAIGNS_API_KEY_FILE: /run/secrets/mandrill_campaigns_api_key
       MAIL_FROM: no-reply@envios.empresa.com
       MAIL_FROM_NAME: EnvioTec
-    secrets: [database_url, redis_url_worker, mandrill_system_api_key, mandrill_campaigns_api_key]
+    secrets: [mandrill_system_api_key, mandrill_campaigns_api_key]
 secrets:
   mandrill_system_api_key: { file: "${SECRETS_DIR:-./secrets}/mandrill_system_api_key" }
   mandrill_campaigns_api_key: { file: "${SECRETS_DIR:-./secrets}/mandrill_campaigns_api_key" }
 ```
 
+- Compose une estas listas de `secrets` y de `environment` con las de `docker-compose.yml`.
 - La key de sistema envía el correo de recuperación de contraseña y los avisos de vencimiento. La de campañas, solo el worker la tiene (ADR-024).
 - Las dos keys son distintas, se crean en Mandrill restringidas a las llamadas necesarias, y se escriben en `secrets/` con permisos `644`.
 
-**Active Directory** (`docker-compose.ad.yml`). Completa la sección 8 del runbook con las variables:
+**Active Directory** (`docker-compose.ad.yml`). Completa la sección 8 del runbook:
 
 ```yaml
 x-ldap: &ldap
@@ -283,12 +320,12 @@ x-ldap: &ldap
 services:
   backend:
     environment: *ldap
-    secrets: [database_url, redis_url_backend, csrf_secret, data_encryption_key, ldap_ca_cert, ldap_bind_password]
-    networks: [edge, data, egress, directory]
+    secrets: [ldap_ca_cert, ldap_bind_password]
+    networks: [directory]
   worker:
     environment: *ldap
-    secrets: [database_url, redis_url_worker, ldap_ca_cert, ldap_bind_password]
-    networks: [data, egress, directory]
+    secrets: [ldap_ca_cert, ldap_bind_password]
+    networks: [directory]
 networks:
   directory:
     driver: bridge
@@ -298,7 +335,6 @@ secrets:
 ```
 
 - `LDAP_BIND_DN` es una cuenta de servicio **de solo lectura**. `ldap_ca_cert` es la CA interna en PEM.
-- Los dos archivos se pueden combinar: Compose une las listas `secrets:` y `environment` de cada servicio.
 - Antes de habilitar las cuentas de AD, complete la validación de la sección 9 del runbook.
 
 Valide la combinación antes de levantar. El comando no debe mostrar errores, y no imprime los secretos:
@@ -309,39 +345,54 @@ dc config --quiet
 
 ### 3.5 Firewall del host
 
-Las redes internas de Docker no tienen salida. Las únicas que la tienen son `outbound` (proxy de egreso), `public` (nginx) y, si se usa AD, `directory`. El firewall del host debe limitarlas, como segunda barrera detrás de la allowlist del proxy.
+Las redes internas de Docker no tienen salida. Las únicas que la tienen son:
+- `outbound` (proxy de egreso);
+- `public` (nginx);
+- `database` (backend, worker y tools hacia SQL Server);
+- si se usa AD, `directory`.
+
+El firewall del host debe limitarlas, como segunda barrera detrás de la allowlist del proxy y de los logins de la base.
 
 Ejemplo con `iptables` en la cadena `DOCKER-USER`. Ajústelo con el equipo de red antes de aplicarlo y hágalo persistente (por ejemplo con `iptables-persistent`):
 
 ```bash
-OUT=$(docker network inspect enviotec_outbound -f '{{(index .IPAM.Config 0).Subnet}}')
-PUB=$(docker network inspect enviotec_public -f '{{(index .IPAM.Config 0).Subnet}}')
+net() { docker network inspect "enviotec_$1" -f '{{(index .IPAM.Config 0).Subnet}}'; }
+OUT=$(net outbound); PUB=$(net public); DB=$(net database); SQL=<IP de SQL Server>
 iptables -I DOCKER-USER 1 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 iptables -I DOCKER-USER 2 -s "$OUT" -p tcp --dport 443 -j RETURN     # proxy de egreso: solo HTTPS
 iptables -I DOCKER-USER 3 -s "$OUT" -p udp --dport 53 -j RETURN      # DNS
 iptables -I DOCKER-USER 4 -s "$OUT" -j DROP
 iptables -I DOCKER-USER 5 -s "$PUB" -j DROP                          # nginx no inicia conexiones
+iptables -I DOCKER-USER 6 -s "$DB" -d "$SQL" -p tcp --dport 1433 -j RETURN
+iptables -I DOCKER-USER 7 -s "$DB" -p udp --dport 53 -j RETURN       # DNS, si la URL usa un nombre
+iptables -I DOCKER-USER 8 -s "$DB" -j DROP
 # Con AD: la red directory solo hacia el controlador de dominio
-# DIR=$(docker network inspect enviotec_directory -f '{{(index .IPAM.Config 0).Subnet}}')
-# iptables -I DOCKER-USER 6 -s "$DIR" -d <IP-del-DC> -p tcp --dport 636 -j RETURN
-# iptables -I DOCKER-USER 7 -s "$DIR" -j DROP
+# DIR=$(net directory)
+# iptables -I DOCKER-USER 9 -s "$DIR" -d <IP-del-DC> -p tcp --dport 636 -j RETURN
+# iptables -I DOCKER-USER 10 -s "$DIR" -j DROP
 ```
 
-Las redes existen después del primer `dc up`. Aplique las reglas y luego verifique la salida (paso 5 de la sección 3.8).
+Las redes existen después del primer `dc run` o `dc up`. Aplique las reglas y luego verifique la salida (paso 5 de la sección 3.8).
 
-### 3.6 Construir, migrar y levantar
+### 3.6 Aprovisionar, migrar y levantar
 
 ```bash
 dc build
 dc build tools
-dc up -d --wait postgres redis
+COMPOSE_FILE=docker-compose.yml npm run db:provision    # base y logins (una vez)
+shred -u secrets/database_admin_url                     # la aplicación no la usa
 dc run --rm tools node scripts/migrate.js up
 dc run --rm tools node scripts/seed.js system
 dc up -d --wait
 dc ps
 ```
 
-ClamAV puede tardar varios minutos en quedar sano la primera vez, porque descarga sus firmas a través del proxy de egreso. Mientras no esté sano, el pipeline de archivos no arranca.
+- El aprovisionamiento es idempotente: se puede repetir sin efectos (`--reset-passwords` cambia las claves de los logins a las de los archivos actuales).
+- Si el equipo de base de datos prefiere crear la base y los logins por su cuenta, el resultado debe ser el mismo:
+  - base con collation `Latin1_General_100_CI_AS_SC`, `READ_COMMITTED_SNAPSHOT ON` y `ALLOW_SNAPSHOT_ISOLATION ON`;
+  - login dueño como dueño de la base y sin roles del servidor;
+  - login de ejecución como usuario de la base, miembro solo del rol `app_runtime`.
+- ClamAV puede tardar varios minutos en quedar sano la primera vez, porque descarga sus firmas a través del proxy de egreso. Mientras no esté sano, el pipeline de archivos no arranca.
 
 ### 3.7 Cuentas iniciales y configuración
 
@@ -369,7 +420,7 @@ ClamAV puede tardar varios minutos en quedar sano la primera vez, porque descarg
 ### 3.8 Verificación del despliegue
 
 1. `dc ps`: todos los servicios en `healthy` o `running`, y `tools` sin contenedores activos.
-2. Salud desde un equipo de la red interna:
+2. Salud desde un equipo de la red interna, que también comprueba la conexión a SQL Server con el certificado validado:
 
    ```bash
    curl -fsS https://enviotec.empresa.local/health/ready      # con la CA interna instalada
@@ -393,7 +444,7 @@ ClamAV puede tardar varios minutos en quedar sano la primera vez, porque descarg
 | --- | --- |
 | Puesta en marcha del envío real (DNS, keys, spike, metadata de Mailchimp) | Runbook, sección 10 |
 | Validación con el AD real | Runbook, sección 9 |
-| Respaldo diario y prueba de restauración | Runbook, sección 4 |
+| Respaldo de la base y de los archivos, y prueba de restauración | Runbook, sección 4 |
 | Actualizar a una versión nueva y revertir | Runbook, sección 3 |
 | Rotación de secretos | Runbook, sección 5 |
 | Monitoreo periódico | Runbook, sección 7 |
@@ -404,11 +455,15 @@ ClamAV puede tardar varios minutos en quedar sano la primera vez, porque descarg
 
 | Síntoma | Causa | Solución |
 | --- | --- | --- |
-| `secret ... file not found` al levantar | Falta un archivo en `secrets/` (en desarrollo, a menudo `mandrill_campaigns_api_key`) | Créelo; vacío deshabilita el envío (sección 2.2, paso 3) |
+| `secret ... file not found` al levantar | Falta un archivo en `secrets/` (en desarrollo, a menudo `mandrill_campaigns_api_key`; en producción, `database_ca_cert`) | Créelo; la key de Mandrill vacía deshabilita el envío (sección 2.2, paso 4) |
 | El backend o el worker no arrancan y el log lista variables | La configuración se valida al arrancar: falta una variable, un valor es inválido o un secreto es débil | Corrija lo que indica el log; nunca muestra valores |
-| `postgres` no arranca o `password authentication failed` | Secretos regenerados con el volumen viejo, o archivos con permisos `600` | `chmod 644` en los archivos. Si regeneró las contraseñas, en desarrollo `docker compose down -v`; en producción, `ALTER ROLE` (runbook, sección 5) |
+| `DATABASE_CA_CERT: es obligatoria en producción` | Producción exige validar el certificado de SQL Server | Coloque la CA en `secrets/database_ca_cert` y `DATABASE_SERVER_NAME` en `.env` |
+| `self-signed certificate` o `certificate has expired` | SQL Server usa su certificado autogenerado (R19) o uno vencido | El equipo de base de datos instala un certificado de la CA interna; en desarrollo se acepta el autofirmado |
+| `Hostname/IP does not match certificate's altnames` | El nombre del certificado no es el de `DATABASE_SERVER_NAME` | Use el nombre exacto del certificado |
+| `Login failed for user '..._runtime'` | Logins sin crear, claves distintas de las de `secrets/` o base inexistente | `npm run db:provision` (o `-- --reset-passwords` si regeneró los secretos) |
+| `Failed to connect ... ETIMEOUT` o `ECONNREFUSED` | El firewall o la red no dejan llegar a SQL Server por el 1433 | Revise la sección 3.5 y que el servidor de base acepte conexiones TCP |
+| `The ... permission was denied` en un log del backend | Una tabla nueva sin `GRANT` a `app_runtime`, o migraciones sin aplicar | `dc build tools` y `migrate.js up`; cada migración otorga sus permisos |
 | Los formularios fallan con error de CSRF u origen | `APP_ORIGIN` no coincide con la URL del navegador | Ajuste `.env` y `docker compose up -d backend` |
-| `relation ... does not exist` después de actualizar | Faltan migraciones o la imagen `tools` es vieja | `docker compose build tools` y `migrate.js up` |
 | Los archivos subidos quedan en "procesando" | ClamAV sin firmas o el file-processor caído | `docker compose ps clamav file-processor` y los logs de `clamav` |
 | El worker registra *mandrill unreachable* | El proxy de egreso tiene el DNS viejo o el firewall bloquea la salida | `docker compose up -d --force-recreate egress-proxy` y revisar la sección 3.5 |
 | Un cambio del frontend no se ve | El frontend está en la imagen de nginx | `docker compose up -d --build nginx` y recargar sin caché |

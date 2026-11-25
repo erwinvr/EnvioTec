@@ -1,71 +1,101 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import pg from 'pg';
+import { connectionOptions } from '../../backend/src/core/db/connection-url.js';
+import { connectDatabase } from '../../backend/src/core/db/pool.js';
 
-function secret(name) {
-  const file = process.env[`${name}_FILE`];
-  if (!file) throw new Error(`Falta ${name}_FILE: estos tests se ejecutan en scripts/check.sh`);
-  return readFileSync(file, 'utf8').trim();
+const read = (path) => readFileSync(path, 'utf8').replace(/\r?\n$/, '');
+
+// Connections of the database tests (ADR-032): the owner login, which has
+// every table privilege (the guards must hold even then), or the runtime one.
+// TLS as in the application: the CA and server name of the environment.
+export function connect(kind) {
+  const variable = kind === 'owner' ? 'MIGRATION_DATABASE_URL_FILE' : 'DATABASE_URL_FILE';
+  if (!process.env[variable]) throw new Error(`Falta ${variable}: estos tests se ejecutan en scripts/check.sh`);
+  return connectDatabase({
+    ...connectionOptions({
+      url: read(process.env[variable]),
+      caCert: process.env.DATABASE_CA_CERT_FILE ? read(process.env.DATABASE_CA_CERT_FILE) : undefined,
+      serverName: process.env.DATABASE_SERVER_NAME || undefined,
+      trustServerCertificate: process.env.DATABASE_TRUST_SERVER_CERTIFICATE === 'true',
+    }, `enviotec-db-tests-${kind}`),
+    requestTimeout: 60000,
+  });
 }
 
-export async function connect(kind) {
-  const url = secret(kind === 'owner' ? 'MIGRATION_DATABASE_URL' : 'DATABASE_URL');
-  const client = new pg.Client({ connectionString: url, application_name: `enviotec-db-tests-${kind}` });
-  await client.connect();
-  return client;
-}
-
-// Runs fn inside a transaction that is always rolled back, so tests never
+// Runs fn(tx) inside a transaction that is always rolled back, so tests never
 // leave data behind.
-export async function inRollback(client, fn) {
-  await client.query('BEGIN');
+export async function inRollback(db, fn) {
+  const tx = await db.connect();
+  await tx.begin();
   try {
-    return await fn();
+    return await fn(tx);
   } finally {
-    await client.query('ROLLBACK');
+    await tx.rollback();
   }
 }
 
-// Asserts that a statement fails, without aborting the surrounding
-// transaction (uses a savepoint).
-export async function expectFailure(client, sql, params, pattern) {
-  await client.query('SAVEPOINT expect_failure');
+// fn(tx) prepares what it needs and runs a statement that must fail with an
+// error matching `pattern`. Each case gets its own transaction, always rolled
+// back: in SQL Server an error raised by a trigger rolls back the whole
+// transaction, so a failure never shares its transaction with the next case.
+export async function failsWith(db, pattern, fn) {
+  const tx = await db.connect();
+  await tx.begin();
   try {
-    await client.query(sql, params);
+    await fn(tx);
   } catch (error) {
-    await client.query('ROLLBACK TO SAVEPOINT expect_failure');
     assert.match(`${error.code} ${error.message}`, pattern);
     return;
+  } finally {
+    await tx.rollback();
   }
-  await client.query('ROLLBACK TO SAVEPOINT expect_failure');
-  assert.fail(`se esperaba un error: ${sql}`);
+  assert.fail(`se esperaba un error que coincida con ${pattern}`);
 }
 
-export async function insertArea(client, name = `Área ${Math.random().toString(36).slice(2, 8)}`) {
-  const { rows } = await client.query('INSERT INTO areas (name) VALUES ($1) RETURNING id', [name]);
+// A single statement that must fail, in its own rolled-back transaction.
+export const expectFailure = (db, sql, params, pattern) => failsWith(db, pattern, (tx) => tx.query(sql, params));
+
+export async function insertArea(db, name = `Área ${Math.random().toString(36).slice(2, 8)}`) {
+  const { rows } = await db.query('INSERT INTO areas (name) OUTPUT inserted.id VALUES ($1)', [name]);
   return rows[0].id;
 }
 
-export async function insertLocalUser(client, areaId, suffix = Math.random().toString(36).slice(2, 8)) {
-  const { rows } = await client.query(
-    `INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, expires_at)
-     VALUES ($1, $2, 'Usuario de prueba', 'local', '$argon2id$v=19$m=19456,t=2,p=1$x$y', $3, now() + interval '90 days')
-     RETURNING id`,
+export async function insertLocalUser(db, areaId, suffix = Math.random().toString(36).slice(2, 8)) {
+  const { rows } = await db.query(
+    `DECLARE @out TABLE (id uniqueidentifier);
+     INSERT INTO users (username, email, display_name, auth_source, password_hash, area_id, expires_at)
+     OUTPUT inserted.id INTO @out
+     VALUES ($1, $2, 'Usuario de prueba', 'local', '$argon2id$v=19$m=19456,t=2,p=1$x$y', $3, DATEADD(day, 90, SYSUTCDATETIME()));
+     SELECT id FROM @out;`,
     [`local.${suffix}`, `local.${suffix}@example.test`, areaId],
   );
   return rows[0].id;
 }
 
-export async function insertAdUser(client, suffix = Math.random().toString(36).slice(2, 8)) {
-  const { rows } = await client.query(
-    `INSERT INTO users (username, email, display_name, auth_source, ad_object_guid)
-     VALUES ($1, $2, 'Usuario AD', 'ad', gen_random_uuid()) RETURNING id`,
+export async function insertAdUser(db, suffix = Math.random().toString(36).slice(2, 8)) {
+  const { rows } = await db.query(
+    `DECLARE @out TABLE (id uniqueidentifier);
+     INSERT INTO users (username, email, display_name, auth_source, ad_object_guid)
+     OUTPUT inserted.id INTO @out VALUES ($1, $2, 'Usuario AD', 'ad', NEWID());
+     SELECT id FROM @out;`,
     [`ad.${suffix}`, `ad.${suffix}@example.test`],
   );
   return rows[0].id;
 }
 
-export async function roleId(client, name) {
-  const { rows } = await client.query('SELECT id FROM roles WHERE name = $1', [name]);
+export async function roleId(db, name) {
+  const { rows } = await db.query('SELECT id FROM roles WHERE name = $1', [name]);
   return rows[0].id;
+}
+
+// An audit event through the only path the application has (A7).
+export function appendAudit(db, action, { metadata = '{}', ip = null } = {}) {
+  return db.query(
+    `DECLARE @id uniqueidentifier;
+     EXEC dbo.append_audit_log @actor_type = 'system', @actor_user_id = NULL, @actor_session_id = NULL, @action = $1,
+          @resource_type = 'test', @resource_id = '1', @result = 'success', @ip = $2, @user_agent = 'ua',
+          @request_id = 'req', @metadata = $3, @id = @id OUTPUT;
+     SELECT @id AS id;`,
+    [action, ip, metadata],
+  );
 }

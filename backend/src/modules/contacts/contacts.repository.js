@@ -1,11 +1,12 @@
 import { areaCondition } from '../../core/authorization/area-scope.js';
-import { escapeLike } from '../../core/db/sql.js';
+import { escapeLike, existsBit, page } from '../../core/db/sql.js';
 
 // SQL of lists, contacts and imports. Every read and every target of a
-// change goes through the area scope (ADR-008).
+// change goes through the area scope (ADR-008). Variables are kept as JSON:
+// attributes (array of names), attribute_labels and attribute_types (objects).
 
 const LIST_COLUMNS = `l.id, l.area_id, a.name AS area_name, l.name, l.description, l.attributes, l.attribute_labels, l.attribute_types, l.created_at, l.updated_at,
-  (SELECT count(*)::int FROM contacts c WHERE c.list_id = l.id) AS contact_count`;
+  (SELECT COUNT(*) FROM contacts c WHERE c.list_id = l.id) AS contact_count`;
 const CONTACT_COLUMNS = 'c.id, c.list_id, c.email, c.first_name, c.last_name, c.attributes, c.anonymized_at, c.created_at, c.updated_at';
 const IMPORT_COLUMNS = `i.id, i.list_id, i.original_name, i.size_bytes, i.sha256, i.status, i.total_rows, i.inserted, i.updated,
   i.rejected, i.errors, i.failure_reason, i.created_at, i.finished_at, i.header, i.sample, i.mapping, i.file_id, i.area_id,
@@ -26,8 +27,8 @@ export function createContactsRepository() {
     async list(db, scope, id, { forUpdate = false } = {}) {
       const params = [id];
       const { rows } = await db.query(
-        `SELECT ${LIST_COLUMNS} FROM contact_lists l JOIN areas a ON a.id = l.area_id
-          WHERE l.id = $1 AND ${areaCondition(scope, 'l.area_id', params)} ${forUpdate ? 'FOR UPDATE OF l' : ''}`,
+        `SELECT ${LIST_COLUMNS} FROM contact_lists l ${forUpdate ? 'WITH (UPDLOCK, ROWLOCK)' : ''} JOIN areas a ON a.id = l.area_id
+          WHERE l.id = $1 AND ${areaCondition(scope, 'l.area_id', params)}`,
         params,
       );
       return rows[0] ?? null;
@@ -42,7 +43,8 @@ export function createContactsRepository() {
     async createList(db, { areaId, name, description, variables, actorId }) {
       const { rows } = await db.query(
         `INSERT INTO contact_lists (area_id, name, description, attributes, attribute_labels, attribute_types, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING id`,
+         OUTPUT inserted.id
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
         [areaId, name, description ?? '', variables.map((v) => v.name), Object.fromEntries(variables.map((v) => [v.name, v.label])),
           Object.fromEntries(variables.map((v) => [v.name, v.type ?? 'text'])), actorId],
       );
@@ -52,9 +54,9 @@ export function createContactsRepository() {
     async updateList(db, id, changes, actorId) {
       await db.query(
         `UPDATE contact_lists SET
-            name = CASE WHEN $2 THEN $3 ELSE name END,
-            description = CASE WHEN $4 THEN $5 ELSE description END,
-            updated_by = $6
+            name = CASE WHEN $2 = 1 THEN $3 ELSE name END,
+            description = CASE WHEN $4 = 1 THEN $5 ELSE description END,
+            updated_by = $6, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, 'name' in changes, changes.name ?? null, 'description' in changes, changes.description ?? null, actorId],
       );
@@ -62,8 +64,10 @@ export function createContactsRepository() {
 
     async addVariable(db, id, { name, label, type }, actorId) {
       await db.query(
-        `UPDATE contact_lists SET attributes = array_append(attributes, $2), attribute_labels = attribute_labels || jsonb_build_object($2::text, $3::text),
-                attribute_types = attribute_types || jsonb_build_object($2::text, $5::text), updated_by = $4
+        `UPDATE contact_lists SET attributes = JSON_MODIFY(attributes, 'append $', $2),
+                attribute_labels = JSON_MODIFY(attribute_labels, CONCAT('$."', $2, '"'), $3),
+                attribute_types = JSON_MODIFY(attribute_types, CONCAT('$."', $2, '"'), $5),
+                updated_by = $4, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, name, label, actorId, type ?? 'text'],
       );
@@ -71,24 +75,34 @@ export function createContactsRepository() {
 
     async setVariableLabel(db, id, name, label, actorId) {
       await db.query(
-        'UPDATE contact_lists SET attribute_labels = attribute_labels || jsonb_build_object($2::text, $3::text), updated_by = $4 WHERE id = $1',
+        `UPDATE contact_lists SET attribute_labels = JSON_MODIFY(attribute_labels, CONCAT('$."', $2, '"'), $3),
+                updated_by = $4, updated_at = SYSUTCDATETIME()
+          WHERE id = $1`,
         [id, name, label, actorId],
       );
     },
 
+    // The array without the variable is built here, from the row locked for
+    // the update (an ordered STRING_AGG cannot go inside an UPDATE).
     async removeVariable(db, id, name, actorId) {
+      const { rows } = await db.query('SELECT attributes FROM contact_lists WITH (UPDLOCK, ROWLOCK) WHERE id = $1', [id]);
+      const attributes = (rows[0]?.attributes ?? []).filter((attribute) => attribute !== name);
       await db.query(
-        `UPDATE contact_lists SET attributes = array_remove(attributes, $2), attribute_labels = attribute_labels - $2::text,
-                attribute_types = attribute_types - $2::text, updated_by = $3
+        `UPDATE contact_lists SET
+                attributes = $4,
+                attribute_labels = JSON_MODIFY(attribute_labels, CONCAT('$."', $2, '"'), NULL),
+                attribute_types = JSON_MODIFY(attribute_types, CONCAT('$."', $2, '"'), NULL),
+                updated_by = $3, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
-        [id, name, actorId],
+        [id, name, actorId, attributes],
       );
     },
 
     // A variable with data cannot be removed (ADR-028).
     async variableInUse(db, listId, name) {
       const { rows } = await db.query(
-        "SELECT EXISTS (SELECT 1 FROM contacts WHERE list_id = $1 AND attributes ? $2 AND attributes ->> $2 <> '') AS used",
+        `SELECT ${existsBit(`SELECT 1 FROM contacts c CROSS APPLY OPENJSON(c.attributes) j
+                            WHERE c.list_id = $1 AND j.[key] = $2 AND j.value <> ''`)} AS used`,
         [listId, name],
       );
       return rows[0].used;
@@ -99,15 +113,15 @@ export function createContactsRepository() {
       let where = 'WHERE c.list_id = $1';
       if (search) {
         params.push(`%${escapeLike(search)}%`);
-        where += ` AND (c.email ILIKE $2 OR c.first_name ILIKE $2 OR c.last_name ILIKE $2)`;
+        where += " AND (c.email LIKE $2 ESCAPE '\\' OR c.first_name LIKE $2 ESCAPE '\\' OR c.last_name LIKE $2 ESCAPE '\\')";
       }
-      const { rows: count } = await db.query(`SELECT count(*)::int AS total FROM contacts c ${where}`, params);
-      params.push(limit, offset);
+      const { rows: count } = await db.query(`SELECT COUNT(*) AS total FROM contacts c ${where}`, params);
+      params.push(offset, limit);
       const { rows } = await db.query(
         `SELECT ${CONTACT_COLUMNS},
-                EXISTS (SELECT 1 FROM suppressions s WHERE s.email_hash = sha256(convert_to(lower(c.email::text), 'UTF8'))) AS suppressed
+                ${existsBit('SELECT 1 FROM suppressions s WHERE s.email_hash = c.email_hash')} AS suppressed
            FROM contacts c ${where}
-          ORDER BY c.email LIMIT $${params.length - 1} OFFSET $${params.length}`,
+          ORDER BY c.email ${page(`$${params.length - 1}`, `$${params.length}`)}`,
         params,
       );
       return { rows, total: count[0].total };
@@ -116,8 +130,9 @@ export function createContactsRepository() {
     async contactInScope(db, scope, id, { forUpdate = false } = {}) {
       const params = [id];
       const { rows } = await db.query(
-        `SELECT ${CONTACT_COLUMNS}, l.attributes AS list_attributes, l.attribute_types AS list_types FROM contacts c JOIN contact_lists l ON l.id = c.list_id
-          WHERE c.id = $1 AND ${areaCondition(scope, 'c.area_id', params)} ${forUpdate ? 'FOR UPDATE OF c' : ''}`,
+        `SELECT ${CONTACT_COLUMNS}, l.attributes AS list_attributes, l.attribute_types AS list_types
+           FROM contacts c ${forUpdate ? 'WITH (UPDLOCK, ROWLOCK)' : ''} JOIN contact_lists l ON l.id = c.list_id
+          WHERE c.id = $1 AND ${areaCondition(scope, 'c.area_id', params)}`,
         params,
       );
       return rows[0] ?? null;
@@ -126,7 +141,8 @@ export function createContactsRepository() {
     async createContact(db, { areaId, listId, contact, actorId }) {
       const { rows } = await db.query(
         `INSERT INTO contacts (area_id, list_id, email, first_name, last_name, attributes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+         OUTPUT inserted.id
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [areaId, listId, contact.email, contact.first_name, contact.last_name, contact.attributes, actorId],
       );
       return rows[0].id;
@@ -134,7 +150,8 @@ export function createContactsRepository() {
 
     async updateContact(db, id, contact) {
       await db.query(
-        'UPDATE contacts SET email = $2, first_name = $3, last_name = $4, attributes = $5 WHERE id = $1 AND anonymized_at IS NULL',
+        `UPDATE contacts SET email = $2, first_name = $3, last_name = $4, attributes = $5, updated_at = SYSUTCDATETIME()
+          WHERE id = $1 AND anonymized_at IS NULL`,
         [id, contact.email, contact.first_name, contact.last_name, contact.attributes],
       );
     },
@@ -147,16 +164,21 @@ export function createContactsRepository() {
     // Returns how many were inserted and how many updated.
     async upsertContacts(db, { areaId, listId, rows, actorId }) {
       const { rows: result } = await db.query(
-        `INSERT INTO contacts (area_id, list_id, email, first_name, last_name, attributes, created_by)
-         SELECT $1, $2, r.email, r.first_name, r.last_name, r.attributes, $4
-           FROM jsonb_to_recordset($3::jsonb) AS r(email citext, first_name text, last_name text, attributes jsonb)
-         ON CONFLICT (list_id, email) DO UPDATE
-           SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, attributes = EXCLUDED.attributes
-           WHERE contacts.anonymized_at IS NULL
-         RETURNING (xmax = 0) AS inserted`,
+        `MERGE contacts WITH (HOLDLOCK) AS t
+         USING (SELECT email, first_name, last_name, attributes FROM OPENJSON($3)
+                  WITH (email varchar(254) '$.email', first_name nvarchar(100) '$.first_name',
+                        last_name nvarchar(100) '$.last_name', attributes nvarchar(max) '$.attributes' AS JSON)) AS r
+            ON t.list_id = $2 AND t.email = r.email COLLATE Latin1_General_100_CI_AS_SC_UTF8
+         WHEN MATCHED AND t.anonymized_at IS NULL THEN
+           UPDATE SET first_name = r.first_name, last_name = r.last_name, attributes = COALESCE(r.attributes, N'{}'),
+                      updated_at = SYSUTCDATETIME()
+         WHEN NOT MATCHED THEN
+           INSERT (area_id, list_id, email, first_name, last_name, attributes, created_by)
+           VALUES ($1, $2, r.email, r.first_name, r.last_name, COALESCE(r.attributes, N'{}'), $4)
+         OUTPUT $action AS action;`,
         [areaId, listId, JSON.stringify(rows), actorId],
       );
-      const inserted = result.filter((row) => row.inserted).length;
+      const inserted = result.filter((row) => row.action === 'INSERT').length;
       return { inserted, updated: result.length - inserted };
     },
 
@@ -164,8 +186,8 @@ export function createContactsRepository() {
       let after = '';
       for (;;) {
         const { rows } = await db.query(
-          `SELECT email, first_name, last_name, attributes FROM contacts
-            WHERE list_id = $1 AND anonymized_at IS NULL AND email > $2 ORDER BY email LIMIT 1000`,
+          `SELECT TOP (1000) email, first_name, last_name, attributes FROM contacts
+            WHERE list_id = $1 AND anonymized_at IS NULL AND email > $2 ORDER BY email`,
           [listId, after],
         );
         if (rows.length === 0) return;
@@ -178,7 +200,8 @@ export function createContactsRepository() {
     async createImport(db, { areaId, listId, file, originalName, actorId }) {
       const { rows } = await db.query(
         `INSERT INTO contact_imports (area_id, list_id, file_id, original_name, size_bytes, sha256, created_by, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'awaiting_mapping') RETURNING id`,
+         OUTPUT inserted.id
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'awaiting_mapping')`,
         [areaId, listId, file.id, originalName, file.size, file.sha256, actorId],
       );
       return rows[0].id;
@@ -186,8 +209,8 @@ export function createContactsRepository() {
 
     async imports(db, listId) {
       const { rows } = await db.query(
-        `SELECT ${IMPORT_COLUMNS} FROM contact_imports i JOIN users u ON u.id = i.created_by
-          WHERE i.list_id = $1 ORDER BY i.created_at DESC LIMIT 50`,
+        `SELECT TOP (50) ${IMPORT_COLUMNS} FROM contact_imports i JOIN users u ON u.id = i.created_by
+          WHERE i.list_id = $1 ORDER BY i.created_at DESC`,
         [listId],
       );
       return rows;
@@ -196,8 +219,8 @@ export function createContactsRepository() {
     async importInScope(db, scope, id, { forUpdate = false } = {}) {
       const params = [id];
       const { rows } = await db.query(
-        `SELECT ${IMPORT_COLUMNS} FROM contact_imports i JOIN users u ON u.id = i.created_by
-          WHERE i.id = $1 AND ${areaCondition(scope, 'i.area_id', params)} ${forUpdate ? 'FOR UPDATE OF i' : ''}`,
+        `SELECT ${IMPORT_COLUMNS} FROM contact_imports i ${forUpdate ? 'WITH (UPDLOCK, ROWLOCK)' : ''} JOIN users u ON u.id = i.created_by
+          WHERE i.id = $1 AND ${areaCondition(scope, 'i.area_id', params)}`,
         params,
       );
       return rows[0] ?? null;
@@ -206,25 +229,25 @@ export function createContactsRepository() {
     // For the worker: the import whose preview is pending, locked.
     async previewImportByFile(db, fileId) {
       const { rows } = await db.query(
-        "SELECT id, area_id, list_id, created_by FROM contact_imports WHERE file_id = $1 AND status = 'awaiting_mapping' AND header IS NULL FOR UPDATE",
+        "SELECT id, area_id, list_id, created_by FROM contact_imports WITH (UPDLOCK, ROWLOCK) WHERE file_id = $1 AND status = 'awaiting_mapping' AND header IS NULL",
         [fileId],
       );
       return rows[0] ?? null;
     },
 
     async setPreview(db, id, { header, sample }) {
-      await db.query('UPDATE contact_imports SET header = $2::jsonb, sample = $3::jsonb WHERE id = $1', [id, JSON.stringify(header), JSON.stringify(sample)]);
+      await db.query('UPDATE contact_imports SET header = $2, sample = $3 WHERE id = $1', [id, JSON.stringify(header), JSON.stringify(sample)]);
     },
 
     // The mapping is kept; the sample (personal data) is no longer needed.
     async startMapping(db, id, mapping) {
-      await db.query("UPDATE contact_imports SET status = 'pending', mapping = $2::jsonb, sample = NULL WHERE id = $1", [id, JSON.stringify(mapping)]);
+      await db.query("UPDATE contact_imports SET status = 'pending', mapping = $2, sample = NULL WHERE id = $1", [id, JSON.stringify(mapping)]);
     },
 
     async expiredAwaitingImports(db, hours) {
       const { rows } = await db.query(
-        `SELECT id, file_id, list_id, created_by FROM contact_imports
-          WHERE status = 'awaiting_mapping' AND created_at < now() - make_interval(hours => $1) FOR UPDATE SKIP LOCKED`,
+        `SELECT id, file_id, list_id, created_by FROM contact_imports WITH (UPDLOCK, READPAST, ROWLOCK)
+          WHERE status = 'awaiting_mapping' AND created_at < DATEADD(hour, -$1, SYSUTCDATETIME())`,
         [hours],
       );
       return rows;
@@ -233,7 +256,7 @@ export function createContactsRepository() {
     // For the worker: the pending import with this file, locked.
     async pendingImportByFile(db, fileId) {
       const { rows } = await db.query(
-        "SELECT id, area_id, list_id, created_by FROM contact_imports WHERE file_id = $1 AND status = 'pending' FOR UPDATE",
+        "SELECT id, area_id, list_id, created_by FROM contact_imports WITH (UPDLOCK, ROWLOCK) WHERE file_id = $1 AND status = 'pending'",
         [fileId],
       );
       return rows[0] ?? null;
@@ -242,7 +265,7 @@ export function createContactsRepository() {
     async finishImport(db, id, { status, totalRows = null, inserted = null, updated = null, rejected = null, errors = [], failureReason = null }) {
       await db.query(
         `UPDATE contact_imports SET status = $2, total_rows = $3, inserted = $4, updated = $5, rejected = $6,
-                errors = $7::jsonb, failure_reason = $8, finished_at = now(), sample = NULL
+                errors = $7, failure_reason = $8, finished_at = SYSUTCDATETIME(), sample = NULL
           WHERE id = $1`,
         [id, status, totalRows, inserted, updated, rejected, JSON.stringify(errors), failureReason],
       );

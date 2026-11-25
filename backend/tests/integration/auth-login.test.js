@@ -82,7 +82,7 @@ describe('login y sesiones', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (sc
   it('bloqueo progresivo: a los 5 fallos la cuenta se bloquea, aunque luego llegue la contraseña correcta', async () => {
     const user = await h.localUser('lockme');
     for (let i = 0; i < 5; i += 1) assert.equal((await h.login(user.username, 'mala-contraseña')).res.statusCode, 401);
-    const { rows } = await h.owner.query('SELECT failed_login_count, locked_until > now() AS locked FROM users WHERE id = $1', [user.id]);
+    const { rows } = await h.owner.query('SELECT failed_login_count, CAST(CASE WHEN locked_until > SYSUTCDATETIME() THEN 1 ELSE 0 END AS bit) AS locked FROM users WHERE id = $1', [user.id]);
     assert.equal(rows[0].failed_login_count, 5);
     assert.equal(rows[0].locked, true);
     const correct = await h.login(user.username);

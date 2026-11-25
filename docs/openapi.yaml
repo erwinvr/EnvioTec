@@ -1928,7 +1928,7 @@ paths:
                 $ref: '#/components/schemas/HealthLive'
   /health/ready:
     get:
-      summary: El backend puede atender (PostgreSQL y Redis responden)
+      summary: El backend puede atender (SQL Server y Redis responden)
       description: No indica qué dependencia falló; eso queda en los logs del servidor.
       operationId: healthReady
       security: []

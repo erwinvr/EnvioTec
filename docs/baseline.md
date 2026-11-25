@@ -67,9 +67,9 @@ Estas decisiones ya están tomadas. No las cambies sin explicar el motivo y pedi
 | --- | --- | --- |
 | Runtime | Node.js, versión **LTS activa** | Soporte de seguridad garantizado |
 | Framework backend | **Fastify** | Validación por JSON Schema integrada, serialización de salida por schema (evita filtrar campos), logging con Pino incluido, plugins oficiales mantenidos |
-| Base de datos | **PostgreSQL**, versión mayor con soporte vigente | Integridad referencial, roles y permisos a nivel de BD, madurez |
-| Acceso a datos | Driver `pg` con **consultas parametrizadas** en repositories | Control total del SQL sin ORM pesado; concatenar SQL está prohibido |
-| Migraciones | `node-pg-migrate` (o alternativa justificada) | Migraciones versionadas, reproducibles y reversibles |
+| Base de datos | **SQL Server** 2022 o posterior, con soporte vigente (ADR-032, requisito de la organización) | Integridad referencial, roles y permisos a nivel de BD, madurez |
+| Acceso a datos | Driver `mssql` con **consultas parametrizadas** en repositories, a través del adaptador de `core/db` | Control total del SQL sin ORM pesado; concatenar SQL está prohibido |
+| Migraciones | Runner propio de migraciones T-SQL (`database/scripts/lib/migrator.js`, ADR-032) | Migraciones versionadas, reproducibles y reversibles |
 | Caché / rate limiting | **Redis** | Contadores compartidos entre instancias; obligatorio desde la segunda instancia |
 | Frontend | HTML5, CSS, **JavaScript Vanilla con ES Modules** | Sin React, Vue, Angular ni jQuery |
 | Proxy de borde | **Traefik** (o Nginx si se justifica) | TLS, enrutamiento, headers, mismo origen |
@@ -77,7 +77,7 @@ Estas decisiones ya están tomadas. No las cambies sin explicar el motivo y pedi
 
 **Mismo origen obligatorio.** El proxy sirve el frontend en `/` y enruta `/api/*` al backend bajo el mismo dominio. Así las cookies funcionan con `SameSite=Strict` o `Lax` y **no se habilita CORS**. CORS solo se activa si la Parte B declara consumidores en otros orígenes, y siempre con una allowlist explícita.
 
-**Backend sin estado.** El backend no guarda estado en memoria: sesiones en PostgreSQL y contadores en Redis. Esto permite escalar horizontalmente agregando réplicas.
+**Backend sin estado.** El backend no guarda estado en memoria: sesiones en la base de datos y contadores en Redis. Esto permite escalar horizontalmente agregando réplicas.
 
 Diagrama de componentes: `docs/baseline/arquitectura.md`.
 
@@ -89,7 +89,7 @@ Diagrama de componentes: `docs/baseline/arquitectura.md`.
 - **Service:** lógica de negocio, reglas de autorización a nivel de objeto, transacciones y eventos de auditoría.
 - **Repository:** único lugar con SQL. Consultas parametrizadas siempre.
 
-PostgreSQL y Redis **no exponen puertos** fuera de la red interna de Docker en producción.
+Redis **no expone puertos** fuera de la red interna de Docker en producción. La base de datos es el SQL Server de la organización: el stack llega a él por una red dedicada, que el firewall limita a ese servidor y puerto, siempre con TLS y el certificado validado en producción.
 
 ---
 

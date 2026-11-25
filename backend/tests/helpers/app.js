@@ -9,7 +9,7 @@ export const PROXY_IP = '172.31.10.10';
 export function validEnv(overrides = {}) {
   return {
     NODE_ENV: 'test',
-    DATABASE_URL: 'postgres://app_runtime:pw@localhost:5432/enviotec',
+    DATABASE_URL: 'sqlserver://enviotec_runtime:pw@localhost:1433/enviotec',
     REDIS_URL: 'redis://backend:pw@localhost:6379/0',
     CSRF_SECRET: randomBytes(48).toString('base64'),
     DATA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),

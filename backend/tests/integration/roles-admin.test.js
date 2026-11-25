@@ -53,7 +53,7 @@ describe('roles, permisos, equivalencias de AD y parámetros', { skip: !enabled 
   it('escalamiento: crear o cambiar un rol con permisos propios ajenos es 403 auditado', async () => {
     const denied = await createRole('escala', ['settings.manage', 'audit.export']);
     assert.equal(denied.json().error.code, 'PRIVILEGE_ESCALATION');
-    const { rows } = await h.owner.query("SELECT 1 FROM audit_logs WHERE action = 'role.create' AND result = 'denied' AND metadata->>'name' = $1",
+    const { rows } = await h.owner.query("SELECT 1 AS found FROM audit_logs WHERE action = 'role.create' AND result = 'denied' AND JSON_VALUE(metadata, '$.name') = $1",
       [`${h.prefix}-escala`]);
     assert.equal(rows.length, 1);
     const { id } = (await createRole('cambio')).json().data;
@@ -117,7 +117,7 @@ describe('roles, permisos, equivalencias de AD y parámetros', { skip: !enabled 
 
   it('parámetros: rango, listas, coherencia, re-autenticación y auditoría con valor anterior y nuevo', async () => {
     const key = 'local_account.default_validity_days';
-    const { rows } = await h.owner.query('SELECT value FROM system_settings WHERE key = $1', [key]);
+    const { rows } = await h.owner.query('SELECT value FROM system_settings WHERE [key] = $1', [key]);
     const original = rows[0].value;
     try {
       const list = await call('GET', '/api/v1/settings');
@@ -126,14 +126,14 @@ describe('roles, permisos, equivalencias de AD y parámetros', { skip: !enabled 
       assert.equal((await call('PATCH', `/api/v1/settings/${key}`, { value: 181 })).json().error.details[0].code, 'above_maximum');
       assert.equal((await call('PATCH', '/api/v1/settings/notifications.admin_emails', { value: ['x'] })).json().error.details[0].code, 'invalid_email');
       assert.equal((await call('PATCH', '/api/v1/settings/no.existe', { value: 1 })).statusCode, 404);
-      const noReauth = await h.session((await h.owner.query('SELECT user_id FROM user_roles WHERE role_id = $1 LIMIT 1', [h.roles.admin])).rows[0].user_id, { reauth: false });
+      const noReauth = await h.session((await h.owner.query('SELECT TOP (1) user_id FROM user_roles WHERE role_id = $1', [h.roles.admin])).rows[0].user_id, { reauth: false });
       assert.equal((await call('PATCH', `/api/v1/settings/${key}`, { value: 60 }, noReauth)).json().error.code, 'REAUTH_REQUIRED');
       const ok = await call('PATCH', `/api/v1/settings/${key}`, { value: 60 });
       assert.equal(ok.json().data.value, 60);
       const audit = await h.audits('setting.update', key);
       assert.deepEqual([audit.at(-1).metadata.before, audit.at(-1).metadata.after], [original, 60]);
     } finally {
-      await h.owner.query('UPDATE system_settings SET value = $2::jsonb WHERE key = $1', [key, JSON.stringify(original)]);
+      await h.owner.query('UPDATE system_settings SET value = $2 WHERE [key] = $1', [key, JSON.stringify(original)]);
     }
   });
 });

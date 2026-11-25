@@ -13,14 +13,14 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [007](007-roles-desde-ad.md) | Grupos de AD solo para roles de negocio | Aceptado |
 | [008](008-alcance-por-area.md) | Alcance por área y 404 para objetos de otra área | Aceptado |
 | [009](009-proxy-de-egreso.md) | Egreso por proxy con allowlist de dominios | Aceptado |
-| [010](010-postgresql-18-uuidv7-particiones.md) | PostgreSQL 18, UUIDv7 y particionado mensual | Aceptado |
+| [010](010-postgresql-18-uuidv7-particiones.md) | PostgreSQL 18, UUIDv7 y particionado mensual | Reemplazado en parte por ADR-032 |
 | [011](011-foto-de-destinatarios-y-cuotas.md) | Foto de destinatarios, cuotas y tope global | Aceptado |
 | [012](012-vista-previa-aislada.md) | Vista previa aislada con CSP propia | Aceptado |
 | [013](013-variables-y-merge.md) | Lenguaje de merge y escape de variables | Aceptado (sujeto al spike) |
 | [014](014-riesgos-aceptados.md) | Riesgos aceptados por el negocio | Aceptado |
 | [015](015-squid-como-proxy-de-egreso.md) | Squid como proxy de egreso | Aceptado |
 | [016](016-argon2-nativo-y-politica-de-contrasenas.md) | Argon2id nativo y política de contraseñas | Aceptado |
-| [017](017-imagen-tools-y-migraciones.md) | Imagen tools para migraciones, seeds y bootstrap | Aceptado |
+| [017](017-imagen-tools-y-migraciones.md) | Imagen tools para migraciones, seeds y bootstrap | Reemplazado en parte por ADR-032 |
 | [018](018-etapas-de-sesion-y-rutas-autenticadas.md) | Etapas de la sesión, rutas autenticadas y auditoría desde la Fase 3 | Aceptado |
 | [019](019-pruebas-de-ad-con-directorio-simulado.md) | Pruebas de AD con directorio simulado | Aceptado |
 | [020](020-programador-de-trabajos-del-worker.md) | Programador de trabajos periódicos del worker | Aceptado |
@@ -35,3 +35,4 @@ Cada decisión de arquitectura relevante se registra aquí con contexto, decisi�
 | [029](029-sincronizacion-y-conciliacion-sin-indice.md) | Sincronización y conciliación sin depender del índice; detalle de aperturas | Aceptado |
 | [030](030-variables-de-fecha-y-envio-por-fecha.md) | Variables de fecha y envío según la fecha de cada contacto | Aceptado |
 | [031](031-estilo-visual-y-dashboard-de-reportes.md) | Estilo visual, menú lateral y dashboard de reportes | Aceptado |
+| [032](032-sql-server.md) | SQL Server en lugar de PostgreSQL | Aceptado |

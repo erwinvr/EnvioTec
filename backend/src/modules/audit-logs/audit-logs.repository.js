@@ -1,10 +1,12 @@
+import { page } from '../../core/db/sql.js';
+
 // SQL for querying the audit log (A7). Every filter is a bound parameter;
 // the sort order is fixed (newest first), so nothing from the request is
 // ever interpolated.
 
 const COLUMNS = `
   a.seq, a.id, a.occurred_at, a.actor_type, a.actor_user_id, u.username AS actor_username, a.action,
-  a.resource_type, a.resource_id, a.result, host(a.ip) AS ip, a.user_agent, a.request_id, a.metadata`;
+  a.resource_type, a.resource_id, a.result, a.ip, a.user_agent, a.request_id, a.metadata`;
 
 function whereClause(filters, params) {
   const conditions = [];
@@ -27,19 +29,19 @@ export function createAuditLogsRepository(db) {
   return {
     async count(filters) {
       const params = [];
-      const { rows } = await db.query(`SELECT count(*)::int AS total FROM audit_logs a ${whereClause(filters, params)}`, params);
+      const { rows } = await db.query(`SELECT COUNT(*) AS total FROM audit_logs a ${whereClause(filters, params)}`, params);
       return rows[0].total;
     },
 
     async findPage(filters, { limit, offset }) {
       const params = [];
       const where = whereClause(filters, params);
-      params.push(limit, offset);
+      params.push(offset, limit);
       const { rows } = await db.query(
         `SELECT ${COLUMNS} FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id
           ${where}
           ORDER BY a.seq DESC
-          LIMIT $${params.length - 1} OFFSET $${params.length}`,
+          ${page(`$${params.length - 1}`, `$${params.length}`)}`,
         params,
       );
       return rows;
@@ -49,12 +51,11 @@ export function createAuditLogsRepository(db) {
     async findBatch(client, filters, { beforeSeq, limit }) {
       const params = [];
       const where = whereClause(filters, params);
-      params.push(beforeSeq, limit);
+      params.push(limit, beforeSeq);
       const { rows } = await client.query(
-        `SELECT ${COLUMNS} FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id
-          ${where ? `${where} AND` : 'WHERE'} a.seq < $${params.length - 1}
-          ORDER BY a.seq DESC
-          LIMIT $${params.length}`,
+        `SELECT TOP ($${params.length - 1}) ${COLUMNS} FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id
+          ${where ? `${where} AND` : 'WHERE'} a.seq < $${params.length}
+          ORDER BY a.seq DESC`,
         params,
       );
       return rows;

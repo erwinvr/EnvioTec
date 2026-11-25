@@ -5,7 +5,7 @@
 // Then replace the data_encryption_key secret with the new file and start
 // the services again.
 import { readFileSync } from 'node:fs';
-import { inLockedTransaction, loadToolsConfig, withOwnerClient } from './lib/connection.js';
+import { inLockedTransaction, loadToolsConfig, withOwnerDatabase } from './lib/connection.js';
 import { parseKey, rotateEncryptionKey } from './lib/rotate-key.js';
 
 const argument = (name) => {
@@ -23,7 +23,8 @@ try {
   const oldKey = parseKey(readFileSync(oldFile, 'utf8'), '--old');
   const newKey = parseKey(readFileSync(newFile, 'utf8'), '--new');
   const config = loadToolsConfig();
-  const result = await withOwnerClient(config, (client) => inLockedTransaction(client, 'enviotec.key_rotation', () => rotateEncryptionKey(client, { oldKey, newKey })));
+  const result = await withOwnerDatabase(config, (db) =>
+    inLockedTransaction(db, 'enviotec.key_rotation', (client) => rotateEncryptionKey(client, { oldKey, newKey })));
   console.log(`Clave rotada: ${result.secrets} secretos MFA cifrados con la clave nueva. Reemplace el secret data_encryption_key y vuelva a iniciar backend y worker.`);
 } catch (error) {
   console.error(`No se rotó la clave: ${error.message}`);

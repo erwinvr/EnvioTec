@@ -122,7 +122,7 @@ describe('API de usuarios y áreas', { skip: !enabled && 'requiere RUN_INTEGRATI
     assert.equal((await h.login(target.username)).res.statusCode, 200);
 
     const expired = await h.localUser('expired-enable', { expiresInMinutes: -10 });
-    await h.owner.query("UPDATE users SET status = 'disabled', disabled_reason = 'expired', disabled_at = now() WHERE id = $1", [expired.id]);
+    await h.owner.query("UPDATE users SET status = 'disabled', disabled_reason = 'expired', disabled_at = SYSUTCDATETIME() WHERE id = $1", [expired.id]);
     assert.equal((await as(adminToken).post(`/api/v1/users/${expired.id}/enable`)).statusCode, 409);
   });
 
@@ -171,7 +171,7 @@ describe('API de usuarios y áreas', { skip: !enabled && 'requiere RUN_INTEGRATI
     const reason = 'Renovación aprobada por la jefatura del área';
     assert.equal((await as(adminToken).post(`/api/v1/users/${admin.id}/renew`, { days: 30, reason })).statusCode, 409);
     const target = await h.localUser('renew', { expiresInMinutes: -60 });
-    await h.owner.query("UPDATE users SET status = 'disabled', disabled_reason = 'expired', disabled_at = now() WHERE id = $1", [target.id]);
+    await h.owner.query("UPDATE users SET status = 'disabled', disabled_reason = 'expired', disabled_at = SYSUTCDATETIME() WHERE id = $1", [target.id]);
     assert.equal((await as(adminToken).post(`/api/v1/users/${target.id}/renew`, { days: 30, reason: 'corto' })).statusCode, 422);
     assert.equal((await as(adminToken).post(`/api/v1/users/${target.id}/renew`, { days: 91, reason })).json().error.details[0].code, 'exceeds_renewal_max');
     const res = await as(adminToken).post(`/api/v1/users/${target.id}/renew`, { days: 30, reason });
@@ -184,7 +184,7 @@ describe('API de usuarios y áreas', { skip: !enabled && 'requiere RUN_INTEGRATI
 
   it('desbloqueo, sesiones de otro usuario y revisión de cuentas locales', async () => {
     const target = await h.localUser('unlock');
-    await h.owner.query("UPDATE users SET failed_login_count = 9, locked_until = now() + interval '1 hour' WHERE id = $1", [target.id]);
+    await h.owner.query("UPDATE users SET failed_login_count = 9, locked_until = DATEADD(hour, 1, SYSUTCDATETIME()) WHERE id = $1", [target.id]);
     assert.equal((await h.login(target.username)).res.statusCode, 401);
     assert.equal((await as(adminToken).post(`/api/v1/users/${target.id}/unlock`)).json().data.lockedUntil, null);
     await h.login(target.username);

@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { BootstrapError, bootstrapAdmin } from './lib/bootstrap.js';
-import { inLockedTransaction, loadToolsConfig, withOwnerClient } from './lib/connection.js';
+import { inLockedTransaction, loadToolsConfig, withOwnerDatabase } from './lib/connection.js';
 
 const emergency = process.argv.includes('--emergency');
 const config = loadToolsConfig();
@@ -78,8 +78,8 @@ function readFromEnvironment() {
 try {
   console.log(emergency ? 'Creación de la cuenta de emergencia' : 'Creación del superadmin inicial');
   const input = process.stdin.isTTY ? await askInteractive() : readFromEnvironment();
-  const result = await withOwnerClient(config, (client) =>
-    inLockedTransaction(client, 'enviotec.bootstrap', () =>
+  const result = await withOwnerDatabase(config, (db) =>
+    inLockedTransaction(db, 'enviotec.bootstrap', (client) =>
       bootstrapAdmin(client, input, { emergency, argon2: config.argon2 })));
   console.log(`Cuenta creada (${result.userId}). `
     + (emergency ? 'Exenta de vigencia.' : `Vence el ${result.expiresAt.toISOString()}.`)

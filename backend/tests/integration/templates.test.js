@@ -87,7 +87,7 @@ describe('plantillas', { skip: !enabled && 'requiere RUN_INTEGRATION=1 (scripts/
   });
 
   it('alcance por área y archivado', async () => {
-    const { rows } = await h.owner.query('INSERT INTO templates (area_id, name) VALUES ($1, $2) RETURNING id', [otherArea, `${h.prefix}-ajena`]);
+    const { rows } = await h.owner.query('INSERT INTO templates (area_id, name) OUTPUT inserted.id VALUES ($1, $2)', [otherArea, `${h.prefix}-ajena`]);
     assert.equal((await call('GET', `/api/v1/templates/${rows[0].id}`)).statusCode, 404);
     assert.equal((await call('GET', `/api/v1/templates/${rows[0].id}/versions/1/preview`)).statusCode, 404);
     assert.ok(!(await call('GET', '/api/v1/templates')).json().data.some((t) => t.id === rows[0].id));

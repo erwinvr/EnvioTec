@@ -3,7 +3,7 @@ import { areaCondition } from '../../core/authorization/area-scope.js';
 // SQL of templates and their versions, always within the area scope.
 
 const TEMPLATE = `t.id, t.area_id, a.name AS area_name, t.name, t.description, t.is_archived, t.created_at, t.updated_at,
-  (SELECT max(v.version) FROM template_versions v WHERE v.template_id = t.id AND v.status = 'ready') AS latest_ready`;
+  (SELECT MAX(v.version) FROM template_versions v WHERE v.template_id = t.id AND v.status = 'ready') AS latest_ready`;
 const VERSION = `v.id, v.template_id, v.version, v.status, v.original_name, v.size_bytes, v.sha256, v.variables, v.images,
   v.failure_reason, v.created_at, v.processed_at, u.username AS created_by_username`;
 
@@ -13,7 +13,7 @@ export function createTemplatesRepository() {
       const params = [];
       const { rows } = await db.query(
         `SELECT ${TEMPLATE} FROM templates t JOIN areas a ON a.id = t.area_id
-          WHERE ${areaCondition(scope, 't.area_id', params)} ${includeArchived ? '' : 'AND NOT t.is_archived'}
+          WHERE ${areaCondition(scope, 't.area_id', params)} ${includeArchived ? '' : 'AND t.is_archived = 0'}
           ORDER BY a.name, t.name`,
         params,
       );
@@ -23,8 +23,8 @@ export function createTemplatesRepository() {
     async find(db, scope, id, { forUpdate = false } = {}) {
       const params = [id];
       const { rows } = await db.query(
-        `SELECT ${TEMPLATE} FROM templates t JOIN areas a ON a.id = t.area_id
-          WHERE t.id = $1 AND ${areaCondition(scope, 't.area_id', params)} ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
+        `SELECT ${TEMPLATE} FROM templates t ${forUpdate ? 'WITH (UPDLOCK, ROWLOCK)' : ''} JOIN areas a ON a.id = t.area_id
+          WHERE t.id = $1 AND ${areaCondition(scope, 't.area_id', params)}`,
         params,
       );
       return rows[0] ?? null;
@@ -37,7 +37,7 @@ export function createTemplatesRepository() {
 
     async create(db, { areaId, name, description, actorId }) {
       const { rows } = await db.query(
-        'INSERT INTO templates (area_id, name, description, created_by, updated_by) VALUES ($1, $2, $3, $4, $4) RETURNING id',
+        'INSERT INTO templates (area_id, name, description, created_by, updated_by) OUTPUT inserted.id VALUES ($1, $2, $3, $4, $4)',
         [areaId, name, description ?? '', actorId],
       );
       return rows[0].id;
@@ -45,9 +45,10 @@ export function createTemplatesRepository() {
 
     async update(db, id, changes, actorId) {
       await db.query(
-        `UPDATE templates SET name = CASE WHEN $2 THEN $3 ELSE name END,
-                              description = CASE WHEN $4 THEN $5 ELSE description END,
-                              is_archived = CASE WHEN $6 THEN $7 ELSE is_archived END, updated_by = $8
+        `UPDATE templates SET name = CASE WHEN $2 = 1 THEN $3 ELSE name END,
+                              description = CASE WHEN $4 = 1 THEN $5 ELSE description END,
+                              is_archived = CASE WHEN $6 = 1 THEN $7 ELSE is_archived END,
+                              updated_by = $8, updated_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, 'name' in changes, changes.name ?? null, 'description' in changes, changes.description ?? null,
           'isArchived' in changes, changes.isArchived ?? null, actorId],
@@ -76,8 +77,8 @@ export function createTemplatesRepository() {
     async createVersion(db, { templateId, file, originalName, actorId }) {
       const { rows } = await db.query(
         `INSERT INTO template_versions (template_id, version, file_id, original_name, size_bytes, sha256, created_by)
-         VALUES ($1, coalesce((SELECT max(version) FROM template_versions WHERE template_id = $1), 0) + 1, $2, $3, $4, $5, $6)
-         RETURNING id, version`,
+         OUTPUT inserted.id, inserted.version
+         SELECT $1, COALESCE((SELECT MAX(version) FROM template_versions WHERE template_id = $1), 0) + 1, $2, $3, $4, $5, $6`,
         [templateId, file.id, originalName, file.size, file.sha256, actorId],
       );
       return rows[0];
@@ -85,8 +86,8 @@ export function createTemplatesRepository() {
 
     async pendingVersionByFile(db, fileId) {
       const { rows } = await db.query(
-        `SELECT v.id, v.template_id, v.version, v.created_by FROM template_versions v
-          WHERE v.file_id = $1 AND v.status = 'pending' FOR UPDATE`,
+        `SELECT v.id, v.template_id, v.version, v.created_by FROM template_versions v WITH (UPDLOCK, ROWLOCK)
+          WHERE v.file_id = $1 AND v.status = 'pending'`,
         [fileId],
       );
       return rows[0] ?? null;
@@ -94,8 +95,8 @@ export function createTemplatesRepository() {
 
     async finishVersion(db, id, { status, html = null, text = null, variables = [], images = [], failureReason = null }) {
       await db.query(
-        `UPDATE template_versions SET status = $2, html = $3, text_body = $4, variables = $5, images = $6::jsonb,
-                failure_reason = $7, processed_at = now()
+        `UPDATE template_versions SET status = $2, html = $3, text_body = $4, variables = $5, images = $6,
+                failure_reason = $7, processed_at = SYSUTCDATETIME()
           WHERE id = $1`,
         [id, status, html, text, variables, JSON.stringify(images), failureReason],
       );
